@@ -1,4 +1,5 @@
 import base64
+from email.message import EmailMessage
 
 from conftest import build_eml
 from email_rag.parser import (
@@ -111,3 +112,40 @@ def test_parse_raw_computes_norm_simhash_hash():
     assert result["norm_text"] == normalize_text("关于会议改期的通知")
     assert result["simhash"] != 0
     assert len(result["content_hash"]) == 64  # sha256 hex
+
+
+# ---------- I-2 空 norm 的常量哈希 ----------
+
+def test_empty_normalized_body_gets_empty_hash():
+    result = parse_raw(build_eml(body="-- \n张三"), "INBOX")
+    assert result["norm_text"] == ""
+    assert result["content_hash"] == ""
+
+
+# ---------- I-3 message/rfc822 转发附件不下钻 ----------
+
+def test_forwarded_eml_attachment_not_in_body():
+    inner = EmailMessage()
+    inner.set_content("内层机密正文：并购标的为X公司。")
+    outer = EmailMessage()
+    outer["Subject"] = "Fwd: 转发"
+    outer["From"] = "a@b.c"
+    outer["To"] = "d@e.f"
+    outer["Date"] = "Mon, 15 Mar 2024 09:00:00 +0800"
+    outer.add_attachment(inner.as_bytes(), maintype="message", subtype="rfc822")
+    result = parse_raw(outer.as_bytes(), "INBOX")
+    assert result["body_text"] == ""
+
+
+def test_forwarded_eml_attachment_with_outer_body():
+    inner = EmailMessage()
+    inner.set_content("内层内容。")
+    outer = EmailMessage()
+    outer["Subject"] = "Fwd2"
+    outer["From"] = "a@b.c"
+    outer["To"] = "d@e.f"
+    outer["Date"] = "Mon, 15 Mar 2024 09:00:00 +0800"
+    outer.set_content("外层正文。")
+    outer.add_attachment(inner.as_bytes(), maintype="message", subtype="rfc822")
+    result = parse_raw(outer.as_bytes(), "INBOX")
+    assert result["body_text"] == "外层正文。"

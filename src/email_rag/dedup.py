@@ -15,6 +15,7 @@ log = logging.getLogger(__name__)
 
 _PREVIEW_LEN = 300
 _SENDER_WINDOW_DAYS = 7
+_MAX_PAIRS_PER_GROUP = 100_000  # 单组 O(n²) 组合上限，超出退化为相邻对窗口
 
 
 @dataclass
@@ -28,21 +29,50 @@ class ReviewPair:
 # ---------- 完全重复 ----------
 
 def exact_dedup(store: Store) -> int:
-    groups: dict[tuple, list[dict]] = {}
-    for rec in store.iter_dedup_candidates():
-        if rec["dedup_status"] != "pending":  # 只判新邮件，避免翻旧账
-            continue
-        if rec["message_id"]:
-            key = ("mid", rec["message_id"].strip().lower())
-            groups.setdefault(key, []).append(rec)
-        if rec["content_hash"]:
-            groups.setdefault(("hash", rec["content_hash"]), []).append(rec)
+    """pending 邮件的完全重复判定。
+
+    同 message_id 与同 content_hash 是两条独立通道，必须按连通分量
+    统一裁决（并查集），否则后一通道的裁决会覆盖前一通道。
+    """
+    pending = [r for r in store.iter_dedup_candidates()
+               if r["dedup_status"] == "pending"]  # 只判新邮件，避免翻旧账
+    parent: dict[int, int] = {}
+
+    def find(x: int) -> int:
+        parent.setdefault(x, x)
+        while parent[x] != x:
+            parent[x] = parent[parent[x]]
+            x = parent[x]
+        return x
+
+    def union(a: int, b: int) -> None:
+        ra, rb = find(a), find(b)
+        if ra != rb:
+            parent[rb] = ra
+
+    by_key: dict[tuple, list[int]] = {}
+    for rec in pending:
+        parent.setdefault(rec["id"], rec["id"])
+        mid = (rec["message_id"] or "").strip().lower()
+        if mid:
+            by_key.setdefault(("mid", mid), []).append(rec["id"])
+        # 空正文（norm_text 为空）的常量哈希不构成重复证据
+        if rec["content_hash"] and rec["norm_text"].strip():
+            by_key.setdefault(("hash", rec["content_hash"]), []).append(rec["id"])
+
+    for ids in by_key.values():
+        for other in ids[1:]:
+            union(ids[0], other)
+
+    components: dict[int, list[dict]] = {}
+    for rec in pending:
+        components.setdefault(find(rec["id"]), []).append(rec)
 
     marked = 0
-    for group in groups.values():
+    for group in components.values():
         if len(group) < 2:
             continue
-        keeper = max(group, key=lambda r: len(r["body_text"]))
+        keeper = max(group, key=lambda r: (len(r["body_text"]), -r["id"]))
         for rec in group:
             if rec["id"] == keeper["id"]:
                 store.update_dedup(rec["id"], "kept")
@@ -59,8 +89,7 @@ def _parse_date(value: str):
         return None
 
 
-def _days_between(a: str, b: str) -> float:
-    da, db = _parse_date(a), _parse_date(b)
+def _days_between_dt(da, db) -> float:
     if da is None or db is None:
         return float("inf")
     try:
@@ -69,25 +98,50 @@ def _days_between(a: str, b: str) -> float:
         return float("inf")  # 时区混合（aware/naive）无法相减 → 视为超出时间窗
 
 
+def _days_between(a: str, b: str) -> float:
+    return _days_between_dt(_parse_date(a), _parse_date(b))
+
+
 def _candidate_pairs(records: list[dict]) -> set[tuple[int, int]]:
     pairs: set[tuple[int, int]] = set()
     by_subject: dict[str, list[dict]] = {}
     by_sender: dict[str, list[dict]] = {}
     for r in records:
-        by_subject.setdefault(normalize_subject(r["subject"]), []).append(r)
+        subject = normalize_subject(r["subject"])
+        if subject:  # 空规范化主题不聚合：无关邮件聚成一组会退化成 O(n²)
+            by_subject.setdefault(subject, []).append(r)
         by_sender.setdefault(r["sender"], []).append(r)
 
-    for group in by_subject.values():
+    for subject, group in by_subject.items():
+        if len(group) * (len(group) - 1) // 2 > _MAX_PAIRS_PER_GROUP:
+            log.warning("主题组 %r 含 %d 封，候选对超上限 %d，退化为相邻对窗口",
+                        subject[:80], len(group), _MAX_PAIRS_PER_GROUP)
+            ordered = sorted(group, key=lambda r: (r["date"], r["id"]))
+            for a, b in zip(ordered, ordered[1:]):
+                pairs.add((min(a["id"], b["id"]), max(a["id"], b["id"])))
+            continue
         for a, b in combinations(group, 2):
             pairs.add((min(a["id"], b["id"]), max(a["id"], b["id"])))
 
+    date_cache: dict[int, object] = {r["id"]: _parse_date(r["date"]) for r in records}
     for group in by_sender.values():
-        group.sort(key=lambda r: r["date"])
+        group.sort(key=lambda r: (r["date"], r["id"]))
+        made = 0
+        stop = False
         for i, a in enumerate(group):
+            if stop:
+                break
             for b in group[i + 1:]:
-                if _days_between(a["date"], b["date"]) > _SENDER_WINDOW_DAYS:
+                if _days_between_dt(date_cache[a["id"]],
+                                    date_cache[b["id"]]) > _SENDER_WINDOW_DAYS:
+                    break
+                if made >= _MAX_PAIRS_PER_GROUP:
+                    log.warning("发件人组 %r 候选对达到上限 %d，停止扩展",
+                                a["sender"], _MAX_PAIRS_PER_GROUP)
+                    stop = True
                     break
                 pairs.add((min(a["id"], b["id"]), max(a["id"], b["id"])))
+                made += 1
     return pairs
 
 

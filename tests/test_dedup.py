@@ -1,5 +1,6 @@
 import json
 
+from email_rag import dedup as dedup_module
 from email_rag.dedup import (
     ReviewPair,
     apply_review,
@@ -11,12 +12,13 @@ from email_rag.dedup import (
 
 def _insert(store, uid, subject="主题", sender="a@b.c", body="正文内容",
             message_id="", content_hash="", simhash=0, date="2024-03-15T09:30:00+08:00",
-            folder="INBOX"):
+            folder="INBOX", norm_text=None):
     raw_id = store.upsert_raw(folder, uid, b"x")
     parsed = {
         "subject": subject, "sender": sender, "to": [], "cc": [], "date": date,
         "message_id": message_id, "in_reply_to": "", "references": [],
-        "body_text": body, "body_html": "", "norm_text": body,
+        "body_text": body, "body_html": "",
+        "norm_text": body if norm_text is None else norm_text,
         "simhash": simhash, "content_hash": content_hash, "parse_error": "",
     }
     return store.insert_email(raw_id, folder, parsed)
@@ -159,3 +161,66 @@ def test_empty_norm_bypasses_near_dedup(store):
     a = _insert(store, 1, body="")
     store.finalize_uniques()
     assert store.get_email(a)["dedup_status"] == "unique"
+
+
+# ---------- I-1 exact 双通道并查集 ----------
+
+def test_exact_duplicate_transitive_chain(store):
+    w = _insert(store, 1, message_id="<m1@t>", body="这是明显更长的正文内容版本一", content_hash="hw")
+    x = _insert(store, 2, message_id="<M1@t>", body="短文本", content_hash="hx")
+    y = _insert(store, 3, message_id="<m2@t>", body="短文本", content_hash="hx")
+    assert exact_dedup(store) == 2
+    rows = {r["id"]: r for r in store.iter_dedup_candidates()}
+    assert rows[w]["dedup_status"] == "kept"
+    assert rows[x]["dedup_status"] == "duplicate" and rows[x]["duplicate_of"] == w
+    assert rows[y]["dedup_status"] == "duplicate" and rows[y]["duplicate_of"] == w
+    assert len(list(store.iter_exportable())) == 1
+
+
+# ---------- I-2 空 norm 的常量哈希防御 ----------
+
+def test_exact_dedup_skips_empty_norm_hash_group(store):
+    import hashlib
+    empty_hash = hashlib.sha256(b"").hexdigest()
+    _insert(store, 1, subject="甲", content_hash=empty_hash, body="-- \n张三", norm_text="")
+    _insert(store, 2, subject="乙", content_hash=empty_hash, body="-- \n李四", norm_text="")
+    assert exact_dedup(store) == 0
+
+
+# ---------- I-5 候选对规模保护 ----------
+
+def test_empty_subject_not_subject_grouped(store):
+    _insert(store, 1, subject="RE: ", sender="a@x.com", date="2024-01-01T08:00:00+08:00",
+            simhash=(1 << 64) - 1, body="内容甲")
+    _insert(store, 2, subject="回复：", sender="b@x.com", date="2024-02-01T08:00:00+08:00",
+            simhash=(1 << 64) - 1, body="内容乙")
+    assert near_dedup(store) == []
+    # 空主题不得聚合：两封同为全 1 simhash，若被聚成一组会被自动合并
+    assert [r["dedup_status"] for r in store.iter_dedup_candidates()] == ["pending", "pending"]
+
+
+def test_oversized_group_window_still_merges_adjacent(store, monkeypatch):
+    monkeypatch.setattr(dedup_module, "_MAX_PAIRS_PER_GROUP", 1)
+    base, far = (1 << 64) - 1, 0x5555555555555555
+    ids = []
+    for i, (sh, day) in enumerate([(base, "01"), (base, "02"), (far, "03"), (far, "04")]):
+        ids.append(_insert(store, i + 1, subject="每日摘要", sender=f"u{i}@x.com",
+                           date=f"2024-01-{day}T08:00:00+08:00", simhash=sh, body=f"内容{i}"))
+    near_dedup(store)
+    assert store.get_email(ids[0])["dedup_status"] == "kept"
+    assert store.get_email(ids[1])["dedup_status"] == "duplicate"
+    assert store.get_email(ids[2])["dedup_status"] == "kept"
+    assert store.get_email(ids[3])["dedup_status"] == "duplicate"
+
+
+def test_oversized_group_window_skips_non_adjacent(store, monkeypatch):
+    monkeypatch.setattr(dedup_module, "_MAX_PAIRS_PER_GROUP", 1)
+    base, far = (1 << 64) - 1, 0x5555555555555555
+    ids = []
+    for i, (sh, day) in enumerate([(base, "01"), (far, "02"), (base, "03")]):
+        ids.append(_insert(store, i + 1, subject="同主题", sender=f"u{i}@x.com",
+                           date=f"2024-01-{day}T08:00:00+08:00", simhash=sh, body=f"内容{i}"))
+    assert near_dedup(store) == []
+    store.finalize_uniques()
+    for eid in ids:
+        assert store.get_email(eid)["dedup_status"] == "unique"

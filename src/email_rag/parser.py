@@ -66,19 +66,33 @@ def _html_to_text(html: str) -> str:
     return converter.handle(html).strip()
 
 
+def _iter_parts(container: Message):
+    """遍历 multipart 子部件；message/*（转发附件）子树不下钻。"""
+    if not container.is_multipart():
+        return
+    for part in container.get_payload():
+        if not isinstance(part, Message):
+            continue
+        yield part
+        if part.get_content_type().startswith("message/"):
+            continue
+        yield from _iter_parts(part)
+
+
 def _extract_body(msg: Message) -> tuple[str, str]:
     text_part: Message | None = None
     html_part: Message | None = None
     if msg.is_multipart():
-        for part in msg.walk():
-            disposition = str(part.get("Content-Disposition", "")).lower()
-            if "attachment" in disposition:
-                continue  # 附件永不进入正文
-            ctype = part.get_content_type()
-            if ctype == "text/plain" and text_part is None:
-                text_part = part
-            elif ctype == "text/html" and html_part is None:
-                html_part = part
+        if not msg.get_content_type().startswith("message/"):
+            for part in _iter_parts(msg):
+                disposition = str(part.get("Content-Disposition", "")).lower()
+                if "attachment" in disposition:
+                    continue  # 附件永不进入正文
+                ctype = part.get_content_type()
+                if ctype == "text/plain" and text_part is None:
+                    text_part = part
+                elif ctype == "text/html" and html_part is None:
+                    html_part = part
     else:
         ctype = msg.get_content_type()
         if ctype == "text/plain":
@@ -149,6 +163,7 @@ def parse_raw(mime_bytes: bytes, folder: str) -> dict:
         **parsed,
         "norm_text": norm,
         "simhash": simhash64(tokenize(norm)),
-        "content_hash": hashlib.sha256(norm.encode("utf-8")).hexdigest(),
+        # 空 norm 不计算哈希：sha256("") 是常量，否则不同邮件会被当完全重复
+        "content_hash": hashlib.sha256(norm.encode("utf-8")).hexdigest() if norm else "",
         "parse_error": "",
     }

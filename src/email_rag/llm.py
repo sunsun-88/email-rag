@@ -81,13 +81,15 @@ class _ChatCompletionsLLM:
 class DeepSeekLLM(_ChatCompletionsLLM):
     def __init__(self, api_key: str, model: str = "deepseek-chat",
                  base_url: str = "https://api.deepseek.com"):
-        super().__init__(api_key, model or "deepseek-chat", base_url)
+        super().__init__(api_key, model or "deepseek-chat",
+                         base_url or "https://api.deepseek.com")
 
 
 class OpenAILLM(_ChatCompletionsLLM):
     def __init__(self, api_key: str, model: str = "gpt-4o-mini",
                  base_url: str = "https://api.openai.com/v1"):
-        super().__init__(api_key, model or "gpt-4o-mini", base_url)
+        super().__init__(api_key, model or "gpt-4o-mini",
+                         base_url or "https://api.openai.com/v1")
 
 
 def create_llm(provider: str, api_key: str, model: str, base_url: str):

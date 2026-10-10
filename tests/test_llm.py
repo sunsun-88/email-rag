@@ -58,3 +58,15 @@ def test_deepseek_llm_judge_pair(monkeypatch):
     })
     llm = DeepSeekLLM(api_key="key", model="deepseek-chat")
     assert llm.judge_pair("文本A", "文本B") is True
+
+
+# ---------- I-4 空 base_url 回退默认值 ----------
+
+def test_create_llm_default_base_urls():
+    assert create_llm("deepseek", "k", "", "")._url == "https://api.deepseek.com/chat/completions"
+    assert create_llm("openai", "k", "", "")._url == "https://api.openai.com/v1/chat/completions"
+
+
+def test_create_llm_explicit_base_url_honored():
+    llm = create_llm("deepseek", "k", "deepseek-reasoner", "https://proxy.example.com")
+    assert llm._url == "https://proxy.example.com/chat/completions"

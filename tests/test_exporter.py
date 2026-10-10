@@ -5,14 +5,15 @@ import yaml
 from email_rag.exporter import export_all, render_markdown, slugify
 
 
-def _insert(store, uid, subject, body, status="unique", content_hash="",
+def _insert(store, uid, subject, body, status="unique", content_hash=None,
             folder="INBOX", date="2024-03-15T09:30:00+08:00"):
     raw_id = store.upsert_raw(folder, uid, b"x")
     eid = store.insert_email(raw_id, folder, {
         "subject": subject, "sender": "张三 <zhang@example.com>",
         "to": ["li@example.com"], "cc": [], "date": date, "message_id": f"<m{uid}@t>",
         "in_reply_to": "", "references": [], "body_text": body, "body_html": "",
-        "norm_text": body, "simhash": 1, "content_hash": content_hash or f"hash{uid}",
+        "norm_text": body, "simhash": 1,
+        "content_hash": content_hash if content_hash is not None else f"hash{uid}",
         "parse_error": "",
     })
     if status != "pending":
@@ -91,3 +92,11 @@ def test_export_idempotent_overwrite(store, tmp_path):
     export_all(store, tmp_path / "out")  # 第二次导出
     files = list((tmp_path / "out").rglob("*.md"))
     assert len(files) == 1  # 同名覆盖，不产生重复文件
+
+
+def test_empty_hash_filenames_unique(store, tmp_path):
+    _insert(store, 1, "同一主题", "x", status="unique", content_hash="")
+    _insert(store, 2, "同一主题", "x", status="unique", content_hash="")
+    export_all(store, tmp_path / "out")
+    files = list((tmp_path / "out").rglob("*.md"))
+    assert len(files) == 2

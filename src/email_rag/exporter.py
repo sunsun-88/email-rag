@@ -49,7 +49,9 @@ def export_all(store: Store, output_dir: str | Path) -> dict:
             ym, day = "unknown-date", "00000000"
         folder_dir = out / slugify(rec["folder"], max_len=20) / ym
         folder_dir.mkdir(parents=True, exist_ok=True)
-        name = f"{day}-{slugify(rec['subject'])}-{rec['content_hash'][:8]}.md"
+        # 空哈希（空正文）回退为 id：同日同主题邮件不得互相覆盖
+        hash_part = rec["content_hash"][:8] or f"x{rec['id']:07d}"
+        name = f"{day}-{slugify(rec['subject'])}-{hash_part}.md"
         (folder_dir / name).write_text(render_markdown(rec), encoding="utf-8")
         count += 1
     return {"exported": count, "output_dir": str(out)}
