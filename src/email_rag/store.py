@@ -43,6 +43,21 @@ CREATE INDEX IF NOT EXISTS idx_emails_hash ON emails(content_hash);
 CREATE INDEX IF NOT EXISTS idx_raw_parsed ON raw_emails(parsed);
 """
 
+_U64 = (1 << 64) - 1
+_I64 = 1 << 63
+
+
+def _to_signed64(value: int) -> int:
+    """无符号 64 位 simhash → SQLite 有符号 64 位（二进制补码，无损）。"""
+    v = int(value) & _U64
+    return v - (1 << 64) if v >= _I64 else v
+
+
+def _fix_row(row: sqlite3.Row) -> dict:
+    rec = dict(row)
+    rec["simhash"] = int(rec["simhash"]) & _U64  # 有符号读回 → 无符号
+    return rec
+
 
 class Store:
     def __init__(self, db_path: str | Path):
@@ -102,7 +117,7 @@ class Store:
                     parsed.get("in_reply_to", ""),
                     json.dumps(parsed.get("references", []), ensure_ascii=False),
                     parsed.get("body_text", ""), parsed.get("body_html", ""),
-                    parsed.get("norm_text", ""), int(parsed.get("simhash", 0)),
+                    parsed.get("norm_text", ""), _to_signed64(parsed.get("simhash", 0)),
                     parsed.get("content_hash", ""), parsed.get("parse_error", ""),
                 ),
             )
@@ -113,7 +128,7 @@ class Store:
 
     def get_email(self, email_id: int) -> dict | None:
         row = self._conn.execute("SELECT * FROM emails WHERE id = ?", (email_id,)).fetchone()
-        return dict(row) if row else None
+        return _fix_row(row) if row else None
 
     def update_dedup(self, email_id: int, status: str, duplicate_of: int | None = None) -> None:
         with self._conn:
@@ -123,9 +138,9 @@ class Store:
             )
 
     def iter_dedup_candidates(self) -> Iterator[dict]:
-        rows = self._conn.execute("SELECT * FROM emails WHERE dedup_status = 'pending'").fetchall()
+        rows = self._conn.execute("SELECT * FROM emails").fetchall()
         for r in rows:
-            yield dict(r)
+            yield _fix_row(r)
 
     def finalize_uniques(self) -> int:
         with self._conn:
@@ -140,7 +155,7 @@ class Store:
                WHERE dedup_status IN ('unique', 'kept') AND parse_error = ''"""
         ).fetchall()
         for r in rows:
-            yield dict(r)
+            yield _fix_row(r)
 
     def counts(self) -> dict:
         raw = self._conn.execute("SELECT COUNT(*) FROM raw_emails").fetchone()[0]
