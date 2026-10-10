@@ -46,6 +46,7 @@ pip install -e ".[dev]"
 ```
 
 激活后，命令行前面会出现 `(.venv)`，之后可以直接用 `email-rag` 命令。
+**注意：激活只对当前窗口有效**——新开 PowerShell 窗口要重新执行激活命令。
 
 > macOS / Linux 的激活命令是 `source .venv/bin/activate`，其余步骤完全相同。
 > 另外所有命令也可以写成 `python -m email_rag.cli <命令>`（效果一样），适合
@@ -367,7 +368,26 @@ content_hash: "a1b2c3d4"
 
 ## 常见问题排查
 
-### Q1：`fetch` 报"登录失败 / 认证错误"
+### Q1：运行命令报"无法将 email-rag 项识别为 cmdlet..."
+
+**虚拟环境没激活**（激活只对当前窗口有效，新开窗口要重新激活）。在项目目录执行：
+
+```powershell
+.\.venv\Scripts\Activate.ps1
+```
+
+成功后提示符最前面会出现 `(.venv)`。如果激活时报红色错误（PowerShell 执行
+策略限制），先运行下面这句再激活一次即可（只对当前窗口生效，关掉窗口自动还原，
+不影响系统设置）：
+
+```powershell
+Set-ExecutionPolicy -Scope Process Bypass
+```
+
+不想激活也可以直接用完整路径运行：`.\.venv\Scripts\email-rag.exe fetch`
+（效果完全一样）。
+
+### Q2：`fetch` 报"登录失败 / 认证错误"
 
 多半是这几个原因，按顺序检查：
 
@@ -376,24 +396,24 @@ content_hash: "a1b2c3d4"
 3. **服务器地址/端口填错**。对着上面的表格核对。
 4. 试试把 `IMAP_PASSWORD` 两边的空格去掉（复制粘贴容易带空格）。
 
-### Q2：`fetch` 跑得很慢 / 感觉被限速
+### Q3：`fetch` 跑得很慢 / 感觉被限速
 
 正常现象，几万封首次拉取本来就慢。想快点可以调大 `config.yaml` 里的
 `rate_limit_per_sec`（比如改成 `5`），但调太大可能触发邮箱的频率限制甚至临时
 封禁，**建议保守设置**。
 
-### Q3：`fetch` 报某个文件夹不存在 / 跳过文件夹
+### Q4：`fetch` 报某个文件夹不存在 / 跳过文件夹
 
 不同邮箱的文件夹名不一样。默认会跳过 `exclude` 里列的垃圾箱类文件夹。如果你
 想拉某个特定文件夹，先去邮箱网页版看一眼它到底叫什么，再改 `config.yaml` 的
 `folders`。
 
-### Q4：复核队列里的 `preview` 看不懂 / 邮件太长了
+### Q5：复核队列里的 `preview` 看不懂 / 邮件太长了
 
 `preview` 是正文的前 300 个字符，足够判断"是不是同一件事的邮件"。如果两封
 preview 看起来像同一件事的转发/回复，通常选 `duplicate`。
 
-### Q5：导出的 Markdown 少了/多了邮件
+### Q6：导出的 Markdown 少了/多了邮件
 
 运行 `email-rag report` 看统计：
 
@@ -407,13 +427,13 @@ preview 看起来像同一件事的转发/回复，通常选 `duplicate`。
 > python -c "import sqlite3; c=sqlite3.connect('data/emails.db'); print(c.execute('SELECT id,subject,dedup_status,duplicate_of FROM emails WHERE id=12').fetchone())"
 > ```
 
-### Q6：我的邮件内容会上传到网上吗？
+### Q7：我的邮件内容会上传到网上吗？
 
 不会。默认情况下所有处理都在你本机完成，邮件只存在 `data/emails.db` 和
 `output/` 里。**只有你主动配置并使用 `dedup --llm` 时**，才会把复核队列里的
 少量文本片段（每封前 300 字符，不含完整邮件）发给你配置的 LLM 服务做判断。
 
-### Q7：附件在哪里？
+### Q8：附件在哪里？
 
 本工具**不下载附件**（设计如此），导出的是邮件正文。
 
