@@ -162,9 +162,30 @@ def apply_review(store: Store, queue_path: str | Path) -> int:
             store.update_dedup(a["id"], "unique")
             store.update_dedup(b["id"], "unique")
         else:
-            keeper = a if len(a["body_text"]) >= len(b["body_text"]) else b
+            keeper = a if len(a["body_text"]) > len(b["body_text"]) else b
             other = b if keeper is a else a
             store.update_dedup(keeper["id"], "kept")
             store.update_dedup(other["id"], "duplicate", keeper["id"])
         applied += 1
     return applied
+
+
+# ---------- LLM 复核 ----------
+
+def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
+                         queue_path: str | Path) -> int:
+    """逐对 LLM 裁定并写回 verdict；失败的 pair 保持 review 留待人工。"""
+    path = Path(queue_path)
+    data = json.loads(path.read_text(encoding="utf-8"))
+    for item, pair in zip(data.get("pairs", []), pairs):
+        if item.get("verdict"):
+            continue
+        try:
+            verdict = llm.judge_pair(item.get("preview_a", ""),
+                                     item.get("preview_b", ""))
+            item["verdict"] = "duplicate" if verdict else "unique"
+        except Exception as exc:  # noqa: BLE001
+            log.warning("LLM 裁定失败 pair(%s, %s): %s", pair.a, pair.b, exc)
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+    return apply_review(store, path)
