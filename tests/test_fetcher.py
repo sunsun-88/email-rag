@@ -91,6 +91,25 @@ def test_retry_exhausted_raises(tmp_path, monkeypatch):
     store.close()
 
 
+def test_fetch_logs_progress(store, caplog):
+    """拉取过程输出进度与限速日志，避免"看起来像卡死"。"""
+    import logging
+
+    fake = FakeClient(uids={1: b"r1", 2: b"r2", 3: b"r3"})
+    fetcher = Fetcher(
+        ImapConfig(host="h", user="u", password="p"),
+        FetchConfig(rate_limit_per_sec=100),
+        store,
+        client_factory=lambda: fake,
+    )
+    with caplog.at_level(logging.INFO):
+        fetcher.fetch_all()
+    messages = [r.getMessage() for r in caplog.records]
+    assert any("进度" in m and "3/3" in m for m in messages)
+    assert any("限速等待" in m for m in messages)
+    store.close()
+
+
 def test_resolve_folders_excludes_junk_and_trash(tmp_path):
     store = _make_store(tmp_path)
     fake = FakeClient(folders=[

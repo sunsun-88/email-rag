@@ -11,7 +11,7 @@ from .store import Store
 
 log = logging.getLogger(__name__)
 
-_BATCH = 500
+_BATCH = 200  # 每批拉取封数：小批次让进度更细腻、内存更省；总限速时长不变
 
 
 class FetchError(Exception):
@@ -58,8 +58,10 @@ class Fetcher:
 
     # ---- fetch ----
     def fetch_all(self) -> dict[str, int]:
+        folders = self.resolve_folders()
+        log.info("将处理以下文件夹：%s", ", ".join(folders) or "（无）")
         result = {}
-        for folder in self.resolve_folders():
+        for folder in folders:
             result[folder] = self.fetch_folder(folder)
         return result
 
@@ -85,7 +87,10 @@ class Fetcher:
             client.select_folder(folder, readonly=True)
             watermark = self._store.watermark(folder)
             uids = sorted(u for u in client.search() if u > watermark)
-            for start in range(0, len(uids), _BATCH):
+            total = len(uids)
+            log.info("开始拉取 %s：待拉取 %d 封", folder, total)
+            done = 0
+            for start in range(0, total, _BATCH):
                 batch = uids[start: start + _BATCH]
                 data = client.fetch(batch, ["BODY.PEEK[]"])
                 for uid in sorted(data):
@@ -95,8 +100,14 @@ class Fetcher:
                         continue
                     if self._store.upsert_raw(folder, int(uid), bytes(mime)):
                         fetched += 1
+                done += len(batch)
+                log.info("%s：进度 %d/%d（累计新写入 %d 封）",
+                         folder, done, total, fetched)
                 if self._cfg.rate_limit_per_sec > 0:
-                    time.sleep(len(batch) / self._cfg.rate_limit_per_sec)
+                    wait = len(batch) / self._cfg.rate_limit_per_sec
+                    log.info("%s：限速等待 %.0f 秒...", folder, wait)
+                    time.sleep(wait)
+            log.info("%s：完成", folder)
             return fetched
         finally:
             client.logout()

@@ -114,6 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("IMAP_HOST / IMAP_USER / IMAP_PASSWORD 未配置（见 .env.example）")
         store = Store(cfg.db_path)
         store.init_schema()
+        print(f"正在连接 {cfg.imap.host}:{cfg.imap.port} ...")
         try:
             fetcher = Fetcher(cfg.imap, cfg.fetch, store)
             for folder, n in fetcher.fetch_all().items():
