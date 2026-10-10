@@ -37,9 +37,10 @@ def render_markdown(record: dict) -> str:
     return "\n".join(lines) + "\n"
 
 
-def export_all(store: Store, output_dir: str | Path) -> dict:
+def export_all(store: Store, output_dir: str | Path, prune: bool = False) -> dict:
     out = Path(output_dir)
     count = 0
+    written: set[Path] = set()
     for rec in store.iter_exportable():
         date = rec["date"] or ""
         if re.fullmatch(r"\d{4}-\d{2}-\d{2}T.*", date):  # ISO 白名单，防路径穿越
@@ -52,6 +53,14 @@ def export_all(store: Store, output_dir: str | Path) -> dict:
         # 空哈希（空正文）回退为 id：同日同主题邮件不得互相覆盖
         hash_part = rec["content_hash"][:8] or f"x{rec['id']:07d}"
         name = f"{day}-{slugify(rec['subject'])}-{hash_part}.md"
-        (folder_dir / name).write_text(render_markdown(rec), encoding="utf-8")
+        target = folder_dir / name
+        target.write_text(render_markdown(rec), encoding="utf-8")
+        written.add(target.resolve())
         count += 1
-    return {"exported": count, "output_dir": str(out)}
+    pruned = 0
+    if prune:
+        for md in out.rglob("*.md"):
+            if md.resolve() not in written:
+                md.unlink()
+                pruned += 1
+    return {"exported": count, "pruned": pruned, "output_dir": str(out)}

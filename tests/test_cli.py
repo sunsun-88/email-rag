@@ -62,3 +62,15 @@ def test_dedup_full_reruns(tmp_path, monkeypatch, capsys):
     counts = store.counts()["by_status"]
     store.close()
     assert counts.get("duplicate") == 1 and counts.get("kept") == 1 and counts.get("unique") == 1
+
+
+def test_export_prune_flag(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+    main(["parse"])
+    main(["dedup"])
+    main(["export"])
+    capsys.readouterr()
+    stale = tmp_path / "output" / "stale.md"
+    stale.write_text("x", encoding="utf-8")
+    assert main(["--env", ".env", "--config", "config.yaml", "export", "--prune"]) == 0
+    assert not stale.exists()

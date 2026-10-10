@@ -35,7 +35,9 @@ def build_parser() -> argparse.ArgumentParser:
     dedup_parser.add_argument("--llm", action="store_true", help="用 LLM 自动裁定复核队列")
     dedup_parser.add_argument("--full", action="store_true",
                               help="全量重去重：先把所有邮件重置为 pending 再执行")
-    sub.add_parser("export", help="导出 Markdown")
+    export_parser = sub.add_parser("export", help="导出 Markdown")
+    export_parser.add_argument("--prune", action="store_true",
+                               help="清理 output 目录中不在本次导出集合的 *.md（dedup --full 后建议）")
     sub.add_parser("report", help="统计报告")
     return parser
 
@@ -54,6 +56,7 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
     if full:
         n = store.reset_dedup()
         print(f"已重置 {n} 封为待去重")
+        print("提示：全量重去重可能改变保留代表，旧导出文件可能残留，建议用 export --prune 清理")
     exact = exact_dedup(store)
     pairs = near_dedup(store, cfg.dedup.auto_merge_threshold,
                        cfg.dedup.review_threshold)
@@ -110,7 +113,8 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "dedup":
             run_dedup(store, cfg, use_llm=args.llm, full=args.full)
         elif args.command == "export":
-            print(json.dumps(export_all(store, cfg.export.output_dir),
+            print(json.dumps(export_all(store, cfg.export.output_dir,
+                                        prune=args.prune),
                              ensure_ascii=False))
         elif args.command == "report":
             print(json.dumps(store.counts(), ensure_ascii=False, indent=2))

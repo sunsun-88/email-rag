@@ -100,3 +100,18 @@ def test_empty_hash_filenames_unique(store, tmp_path):
     export_all(store, tmp_path / "out")
     files = list((tmp_path / "out").rglob("*.md"))
     assert len(files) == 2
+
+
+def test_export_prune_removes_stale(store, tmp_path):
+    _insert(store, 1, "主题甲", "正文", status="unique", content_hash="a" * 64)
+    out = tmp_path / "out"
+    export_all(store, out)
+    stale = out / "inbox" / "2024-03" / "stale-file.md"
+    stale.parent.mkdir(parents=True, exist_ok=True)
+    stale.write_text("stale", encoding="utf-8")
+    export_all(store, out)                      # 默认不清理
+    assert stale.exists()
+    report = export_all(store, out, prune=True)
+    assert not stale.exists()
+    assert report["pruned"] == 1
+    assert len(list(out.rglob("*.md"))) == 1

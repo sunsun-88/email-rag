@@ -36,6 +36,9 @@ email-rag report         # 统计
   自动挂到历史代表，不会重复导出。
 - 复核队列文件为**合并写**：再次运行 `dedup` 不会丢弃未裁定条目，已裁定条目自然清出。
 - `dedup --full` 用于对账/兜底：先把全部邮件重置为 pending，再从头重跑去重。
+- `dedup --full` 可能改变保留代表，导致 `output/` 残留已失效的旧 md（污染 RAG
+  导入）。重跑后建议用 `email-rag export --prune`：正常导出并删除本次未写入的
+  全部 `*.md`（返回 `pruned` 数）；不带 `--prune` 时 export 照旧只增不删。
 
 ## 设计
 
