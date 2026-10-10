@@ -85,6 +85,23 @@ def test_dedup_llm_without_api_key_warns(tmp_path, monkeypatch, capsys):
     assert "LLM_API_KEY" in out
 
 
+def test_paths_resolve_relative_to_config_dir(tmp_path, monkeypatch, capsys):
+    """在任意目录执行命令，data/output 仍落在 config.yaml 所在目录（项目根）。"""
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    (proj / ".env").write_text("IMAP_HOST=h\nIMAP_USER=u\nIMAP_PASSWORD=p\n",
+                               encoding="utf-8")
+    (proj / "config.yaml").write_text("fetch:\n  rate_limit_per_sec: 100\n",
+                                      encoding="utf-8")
+    elsewhere = tmp_path / "elsewhere"
+    elsewhere.mkdir()
+    monkeypatch.chdir(elsewhere)
+    assert main(["--env", str(proj / ".env"), "--config", str(proj / "config.yaml"),
+                 "parse"]) == 0
+    assert (proj / "data" / "emails.db").exists()
+    assert not (elsewhere / "data").exists()
+
+
 def test_export_prune_flag(tmp_path, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch)
     main(["parse"])

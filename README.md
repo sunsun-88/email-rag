@@ -27,8 +27,13 @@
 
 ## 快速开始（第一次用，照着做）
 
-> 全程在 PowerShell 里操作，每一步都有说明。命令都在项目根目录（能看到
-> `README.md`、`config.yaml` 的那个文件夹）执行。
+> 全程在 PowerShell 里操作，每一步都有说明。建议在项目根目录（能看到
+> `README.md`、`config.yaml` 的那个文件夹）执行命令。
+>
+> 数据文件（`data/emails.db`、`data/review_queue.json`）和导出目录（`output/`）
+> 的相对路径都基于 `config.yaml` 所在目录解析——即使在别的目录执行命令，数据也
+> 不会"跑丢"到别处。其中 `data/emails.db` 就是**项目目录下的
+> `data\emails.db`**（例如 `E:\project\python\email\email-rag\data\emails.db`）。
 
 ### 第 1 步：装 Python 环境
 
@@ -75,7 +80,7 @@ fetch:
 ### 第 4 步：拉取 → 解析 → 去重 → 导出
 
 ```powershell
-email-rag fetch    # 从邮箱把邮件拉到本机 data/emails.db
+email-rag fetch    # 从邮箱把邮件拉到本机（项目目录\data\emails.db）
 email-rag parse    # 把原始邮件解析成结构化记录
 email-rag dedup    # 去重；有拿不准的会列进复核队列
 email-rag export   # 导成 Markdown 到 output/ 文件夹

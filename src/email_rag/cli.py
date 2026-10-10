@@ -3,6 +3,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+from pathlib import Path
 
 from .config import AppConfig, load_config
 from .dedup import (
@@ -40,6 +41,24 @@ def build_parser() -> argparse.ArgumentParser:
                                help="清理 output 目录中不在本次导出集合的 *.md（dedup --full 后建议）")
     sub.add_parser("report", help="统计报告")
     return parser
+
+
+def _resolve_data_paths(cfg: AppConfig, base: Path) -> None:
+    """把 data/output 等相对路径固定到 config.yaml 所在目录（项目根）。
+
+    否则在别的目录执行命令时，会在该目录新建一个空库，造成
+    "拉过邮件却像重新开始"的错觉。
+    """
+    for attr in ("db_path", "review_queue_path", "export"):
+        target = getattr(cfg, attr)
+        if attr == "export":
+            out = Path(target.output_dir)
+            if not out.is_absolute():
+                target.output_dir = str(base / out)
+            continue
+        p = Path(target)
+        if not p.is_absolute():
+            setattr(cfg, attr, str(base / p))
 
 
 def run_parse(store: Store) -> int:
@@ -88,6 +107,7 @@ def main(argv: list[str] | None = None) -> int:
     logging.basicConfig(level=logging.INFO,
                         format="%(levelname)s %(name)s: %(message)s")
     cfg = load_config(args.env, args.config)
+    _resolve_data_paths(cfg, Path(args.config).resolve().parent)
 
     if args.command == "fetch":
         if not (cfg.imap.host and cfg.imap.user and cfg.imap.password):
