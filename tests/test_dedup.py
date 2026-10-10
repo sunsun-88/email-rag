@@ -363,16 +363,16 @@ def test_write_review_queue_corrupt_verdict_and_dup_key(store, tmp_path):
 
 # ---------- I-2 候选对仅含 pending ----------
 
-def test_candidate_pairs_skip_anchor_only_groups(store):
+def test_candidate_pairs_skip_anchor_only_groups():
     base = (1 << 64) - 1
-    for i in range(1, 501):
-        eid = _insert(store, i, subject="同一大主题", sender=f"u{i}@x.com", simhash=base)
-        store.update_dedup(eid, "kept")
-    n = _insert(store, 501, subject="独立主题", sender="solo@x.com", simhash=base)
-    pool = [r for r in store.iter_dedup_candidates()
-            if r["dedup_status"] in ("pending", "kept", "unique")
-            and r["norm_text"].strip() and r["simhash"]]
-    pairs = dedup_module._candidate_pairs(pool, {n})
+    anchors = [
+        {"id": i, "subject": "同一大主题", "sender": f"u{i}@x.com",
+         "date": "2024-03-01T08:00:00+08:00", "norm_text": "x", "simhash": base}
+        for i in range(1, 501)
+    ]
+    n = {"id": 501, "subject": "独立主题", "sender": "solo@x.com",
+         "date": "2024-03-01T08:00:00+08:00", "norm_text": "x", "simhash": base}
+    pairs = dedup_module._candidate_pairs(anchors + [n], {501})
     assert pairs == set()
 
 
@@ -418,21 +418,19 @@ def test_apply_review_skips_malformed_entries(store, tmp_path):
 
 # ---------- N-1 发件人组 pending 中心生成（工作量有界） ----------
 
-def test_sender_group_pending_centered_work_bound(store):
+def test_sender_group_pending_centered_work_bound():
     import time
 
     base = (1 << 64) - 1
-    for i in range(1, 1001):
-        eid = _insert(store, i, subject=f"主题{i}", sender="news@x.com",
-                      simhash=base, date="2024-03-01T08:00:00+08:00")
-        store.update_dedup(eid, "kept")
-    n = _insert(store, 1001, subject="新主题", sender="news@x.com",
-                simhash=base, date="2024-03-01T09:00:00+08:00")
-    pool = [r for r in store.iter_dedup_candidates()
-            if r["dedup_status"] in ("pending", "kept", "unique")
-            and r["norm_text"].strip() and r["simhash"]]
+    anchors = [
+        {"id": i, "subject": f"主题{i}", "sender": "news@x.com",
+         "date": "2024-03-01T08:00:00+08:00", "norm_text": "x", "simhash": base}
+        for i in range(1, 1001)
+    ]
+    n = {"id": 1001, "subject": "新主题", "sender": "news@x.com",
+         "date": "2024-03-01T09:00:00+08:00", "norm_text": "x", "simhash": base}
     t0 = time.perf_counter()
-    pairs = dedup_module._candidate_pairs(pool, {n})
+    pairs = dedup_module._candidate_pairs(anchors + [n], {1001})
     elapsed = time.perf_counter() - t0
-    assert pairs == {(i, n) for i in range(1, 1001)}   # 与窗口内全部成员成对
+    assert pairs == {(i, 1001) for i in range(1, 1001)}
     assert elapsed < 0.5, f"候选生成耗时 {elapsed:.3f}s，疑似 O(G^2) 回退"
