@@ -10,3 +10,5 @@ dist/
 build/
 
 .superpowers/
+
+.coverage
