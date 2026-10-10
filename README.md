@@ -39,6 +39,9 @@ email-rag report         # 统计
 - `dedup --full` 可能改变保留代表，导致 `output/` 残留已失效的旧 md（污染 RAG
   导入）。重跑后建议用 `email-rag export --prune`：正常导出并删除本次未写入的
   全部 `*.md`（返回 `pruned` 数）；不带 `--prune` 时 export 照旧只增不删。
+- 建议每轮 `dedup` 后**先完成队列裁定**再做下一轮 `fetch`：未裁定（review）行
+  不参与锚点匹配，裁定未完成期间到达的相似新邮件不会被其锚定，可能独立定稿；
+  事后可用 `dedup --full` 加 `export --prune` 收敛。
 
 ## 设计
 
