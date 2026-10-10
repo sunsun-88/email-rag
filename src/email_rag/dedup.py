@@ -186,27 +186,36 @@ def _candidate_pairs(records: list[dict],
         for a, b in combinations(group, 2):
             _add(a["id"], b["id"])
 
-    date_cache: dict[int, object] = {r["id"]: _parse_date(r["date"]) for r in records}
+    dates: dict[int, object] = {r["id"]: _parse_date(r["date"]) for r in records}
     for group in by_sender.values():
-        if not any(r["id"] in pending_ids for r in group):
-            continue
         group.sort(key=lambda r: (r["date"], r["id"]))
+        group_pending = [r for r in group if r["id"] in pending_ids]
+        if not group_pending:
+            continue
+        index = {r["id"]: i for i, r in enumerate(group)}
         made = 0
-        stop = False
-        for i, a in enumerate(group):
-            if stop:
-                break
-            for b in group[i + 1:]:
-                if _days_between_dt(date_cache[a["id"]],
-                                    date_cache[b["id"]]) > _SENDER_WINDOW_DAYS:
-                    break
-                if _add(a["id"], b["id"]):
+        capped = False
+        for p in group_pending:
+            ip = index[p["id"]]
+            cp = dates[p["id"]]
+            for step in (1, -1):  # 先向后（日期更晚）再向前
+                j = ip + step
+                while 0 <= j < len(group):
+                    if _days_between_dt(cp, dates[group[j]["id"]]) > _SENDER_WINDOW_DAYS:
+                        break
+                    _add(p["id"], group[j]["id"])
                     made += 1
                     if made >= _MAX_PAIRS_PER_GROUP:
-                        log.warning("发件人组 %r 候选对达到上限 %d，停止扩展",
-                                    a["sender"], _MAX_PAIRS_PER_GROUP)
-                        stop = True
+                        capped = True
                         break
+                    j += step
+                if capped:
+                    break
+            if capped:
+                break
+        if capped:
+            log.warning("发件人组过大，候选对截断至 %d（按待处理邮件逐封扩展窗口）",
+                        _MAX_PAIRS_PER_GROUP)
     return pairs
 
 

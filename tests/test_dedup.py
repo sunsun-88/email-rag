@@ -414,3 +414,25 @@ def test_apply_review_skips_malformed_entries(store, tmp_path):
                                         "verdict": "duplicate"}]}),
                  encoding="utf-8")
     assert apply_review(store, q) == 0
+
+
+# ---------- N-1 发件人组 pending 中心生成（工作量有界） ----------
+
+def test_sender_group_pending_centered_work_bound(store):
+    import time
+
+    base = (1 << 64) - 1
+    for i in range(1, 1001):
+        eid = _insert(store, i, subject=f"主题{i}", sender="news@x.com",
+                      simhash=base, date="2024-03-01T08:00:00+08:00")
+        store.update_dedup(eid, "kept")
+    n = _insert(store, 1001, subject="新主题", sender="news@x.com",
+                simhash=base, date="2024-03-01T09:00:00+08:00")
+    pool = [r for r in store.iter_dedup_candidates()
+            if r["dedup_status"] in ("pending", "kept", "unique")
+            and r["norm_text"].strip() and r["simhash"]]
+    t0 = time.perf_counter()
+    pairs = dedup_module._candidate_pairs(pool, {n})
+    elapsed = time.perf_counter() - t0
+    assert pairs == {(i, n) for i in range(1, 1001)}   # 与窗口内全部成员成对
+    assert elapsed < 0.5, f"候选生成耗时 {elapsed:.3f}s，疑似 O(G^2) 回退"
