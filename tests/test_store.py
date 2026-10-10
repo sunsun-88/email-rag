@@ -87,3 +87,13 @@ def test_parse_error_rows_not_exportable(store):
     eid = store.insert_email(r, "INBOX", _parsed(parse_error="HeaderParseError"))
     store.update_dedup(eid, "unique")
     assert list(store.iter_exportable()) == []
+
+
+def test_reset_dedup(store):
+    r1 = store.upsert_raw("INBOX", 1, b"x")
+    e1 = store.insert_email(r1, "INBOX", _parsed())
+    store.update_dedup(e1, "kept")
+    assert store.reset_dedup() == 1
+    row = store.get_email(e1)
+    assert row["dedup_status"] == "pending"
+    assert row["duplicate_of"] is None

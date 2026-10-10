@@ -224,3 +224,138 @@ def test_oversized_group_window_skips_non_adjacent(store, monkeypatch):
     store.finalize_uniques()
     for eid in ids:
         assert store.get_email(eid)["dedup_status"] == "unique"
+
+
+# ---------- 增量去重：历史锚点 ----------
+
+def test_exact_dedup_links_to_historical_kept(store):
+    old = _insert(store, 1, message_id="<old@t>", body="历史正文", content_hash="hold")
+    store.update_dedup(old, "kept")
+    new = _insert(store, 2, message_id="<old@t>", body="新到的正文", content_hash="hold")
+    assert exact_dedup(store) == 1
+    assert store.get_email(new)["dedup_status"] == "duplicate"
+    assert store.get_email(new)["duplicate_of"] == old
+    assert store.get_email(old)["dedup_status"] == "kept"
+    assert [r["id"] for r in store.iter_exportable()] == [old]
+
+
+def test_exact_dedup_promotes_unique_anchor(store):
+    old = _insert(store, 1, message_id="<u@t>", content_hash="hh")
+    store.update_dedup(old, "unique")
+    new = _insert(store, 2, message_id="<u2@t>", content_hash="hh")
+    assert exact_dedup(store) == 1
+    assert store.get_email(old)["dedup_status"] == "kept"
+    assert store.get_email(new)["duplicate_of"] == old
+
+
+def test_exact_dedup_group_resolves_to_anchor(store):
+    old = _insert(store, 1, message_id="<a@t>", body="老正文", content_hash="ha")
+    store.update_dedup(old, "kept")
+    n1 = _insert(store, 2, message_id="<a@t>", body="新甲", content_hash="hn")
+    n2 = _insert(store, 3, message_id="<b@t>", body="新乙", content_hash="hn")
+    assert exact_dedup(store) == 2
+    assert store.get_email(n1)["duplicate_of"] == old
+    assert store.get_email(n2)["duplicate_of"] == old
+    assert store.get_email(old)["dedup_status"] == "kept"
+
+
+def test_near_dedup_links_to_historical_kept(store):
+    base = (1 << 64) - 1
+    old = _insert(store, 1, subject="同主题", simhash=base, body="历史正文")
+    store.update_dedup(old, "kept")
+    new = _insert(store, 2, subject="同主题", simhash=base ^ 0b111, body="新到正文")
+    assert near_dedup(store) == []
+    assert store.get_email(new)["dedup_status"] == "duplicate"
+    assert store.get_email(new)["duplicate_of"] == old
+    assert store.get_email(old)["dedup_status"] == "kept"
+
+
+def test_near_dedup_promotes_unique_anchor(store):
+    base = (1 << 64) - 1
+    old = _insert(store, 1, subject="同主题", simhash=base, body="历史")
+    store.update_dedup(old, "unique")
+    new = _insert(store, 2, subject="同主题", simhash=base ^ 0b11, body="新的")
+    near_dedup(store)
+    assert store.get_email(old)["dedup_status"] == "kept"
+    assert store.get_email(new)["dedup_status"] == "duplicate"
+    assert store.get_email(new)["duplicate_of"] == old
+
+
+def test_near_dedup_review_with_anchor_keeps_anchor(store):
+    base = (1 << 64) - 1
+    old = _insert(store, 1, subject="同主题", simhash=base, body="历史正文")
+    store.update_dedup(old, "kept")
+    new = _insert(store, 2, subject="同主题", simhash=base ^ 0b1111, body="新正文")
+    pairs = near_dedup(store)
+    assert len(pairs) == 1 and pairs[0].a == old and pairs[0].b == new
+    assert store.get_email(old)["dedup_status"] == "kept"
+    assert store.get_email(new)["dedup_status"] == "review"
+
+
+def test_apply_review_anchor_duplicate_keeps_anchor_as_keeper(store, tmp_path):
+    base = (1 << 64) - 1
+    old = _insert(store, 1, subject="同主题", simhash=base, body="短")
+    store.update_dedup(old, "kept")
+    new = _insert(store, 2, subject="同主题", simhash=base ^ 0b1111, body="更长的新正文")
+    pairs = near_dedup(store)
+    queue = tmp_path / "q.json"
+    write_review_queue(store, pairs, queue)
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    data["pairs"][0]["verdict"] = "duplicate"
+    queue.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    assert apply_review(store, queue) == 1
+    assert store.get_email(old)["dedup_status"] == "kept"
+    assert store.get_email(new)["dedup_status"] == "duplicate"
+    assert store.get_email(new)["duplicate_of"] == old
+
+
+def test_apply_review_anchor_unique_verdict_keeps_anchor(store, tmp_path):
+    base = (1 << 64) - 1
+    old = _insert(store, 1, subject="同主题", simhash=base, body="历史")
+    store.update_dedup(old, "kept")
+    new = _insert(store, 2, subject="同主题", simhash=base ^ 0b1111, body="新的")
+    pairs = near_dedup(store)
+    queue = tmp_path / "q.json"
+    write_review_queue(store, pairs, queue)
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    data["pairs"][0]["verdict"] = "unique"
+    queue.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    assert apply_review(store, queue) == 1
+    assert store.get_email(old)["dedup_status"] == "kept"
+    assert store.get_email(new)["dedup_status"] == "unique"
+
+
+def test_write_review_queue_merges_existing(store, tmp_path):
+    base = (1 << 64) - 1
+    a1 = _insert(store, 1, subject="甲主题", simhash=base)
+    b1 = _insert(store, 2, subject="甲主题", simhash=base ^ 0b1111)
+    queue = tmp_path / "q.json"
+    write_review_queue(store, near_dedup(store), queue)
+    c = _insert(store, 3, subject="乙主题", simhash=base)
+    d = _insert(store, 4, subject="乙主题", simhash=base ^ 0b1111)
+    write_review_queue(store, near_dedup(store), queue)
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    keys = sorted((p["a"], p["b"]) for p in data["pairs"])
+    assert keys == sorted([(a1, b1), (c, d)])
+    write_review_queue(store, near_dedup(store), queue)  # 空 pairs 重写不破坏合并
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    assert len(data["pairs"]) == 2
+
+
+def test_write_review_queue_corrupt_verdict_and_dup_key(store, tmp_path):
+    base = (1 << 64) - 1
+    a = _insert(store, 1, subject="同主题", simhash=base)
+    b = _insert(store, 2, subject="同主题", simhash=base ^ 0b1111)
+    queue = tmp_path / "q.json"
+    queue.write_text("{broken json", encoding="utf-8")  # 损坏 → 新建覆盖
+    write_review_queue(store, near_dedup(store), queue)
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    assert [(p["a"], p["b"]) for p in data["pairs"]] == [(a, b)]
+
+    data["pairs"][0]["verdict"] = "unique"  # 已裁定条目在下次 write 时清出
+    queue.write_text(json.dumps(data, ensure_ascii=False), encoding="utf-8")
+    dup = ReviewPair(a=a, b=b, similarity=0.9, subject="同主题")
+    write_review_queue(store, [dup], queue)
+    write_review_queue(store, [dup], queue)  # 键重复不膨胀
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    assert [(p["a"], p["b"]) for p in data["pairs"]] == [(a, b)]

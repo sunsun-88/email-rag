@@ -138,6 +138,14 @@ class Store:
                 (status, duplicate_of, email_id),
             )
 
+    def reset_dedup(self) -> int:
+        """全部邮件重置为待去重（dedup --full 用），返回重置行数。"""
+        with self._conn:
+            cur = self._conn.execute(
+                "UPDATE emails SET dedup_status = 'pending', duplicate_of = NULL"
+            )
+        return cur.rowcount
+
     def iter_dedup_candidates(self) -> Iterator[dict]:
         rows = self._conn.execute("SELECT * FROM emails").fetchall()
         for r in rows:

@@ -22,10 +22,20 @@ email-rag fetch          # 拉取全部邮件（中断后重跑自动续传）
 email-rag parse          # 解析（幂等，可反复跑）
 email-rag dedup          # 去重；复核队列写入 data/review_queue.json
 email-rag dedup --llm    # 用 LLM 自动裁定复核队列（需配置 LLM_PROVIDER）
+email-rag dedup --full   # 全量重去重：重置全部状态后重跑（对账/兜底）
 email-rag dedup data/review_queue.json   # 导入人工裁定后的队列
 email-rag export         # 导出 output/<文件夹>/<YYYY-MM>/*.md
 email-rag report         # 统计
 ```
+
+## 增量使用
+
+每批邮件按 `fetch → parse → dedup（自动对比历史锚点）→ 裁定 → export` 循环即可：
+
+- `dedup` 会把新邮件与库内已定稿（kept/unique，即导出过的）邮件比对，跨运行重复
+  自动挂到历史代表，不会重复导出。
+- 复核队列文件为**合并写**：再次运行 `dedup` 不会丢弃未裁定条目，已裁定条目自然清出。
+- `dedup --full` 用于对账/兜底：先把全部邮件重置为 pending，再从头重跑去重。
 
 ## 设计
 

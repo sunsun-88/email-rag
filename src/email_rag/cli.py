@@ -33,6 +33,8 @@ def build_parser() -> argparse.ArgumentParser:
     dedup_parser.add_argument("queue", nargs="?", default=None,
                               help="复核队列 JSON 文件（导入人工/LLM 裁定）")
     dedup_parser.add_argument("--llm", action="store_true", help="用 LLM 自动裁定复核队列")
+    dedup_parser.add_argument("--full", action="store_true",
+                              help="全量重去重：先把所有邮件重置为 pending 再执行")
     sub.add_parser("export", help="导出 Markdown")
     sub.add_parser("report", help="统计报告")
     return parser
@@ -47,7 +49,11 @@ def run_parse(store: Store) -> int:
     return count
 
 
-def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False) -> None:
+def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
+              full: bool = False) -> None:
+    if full:
+        n = store.reset_dedup()
+        print(f"已重置 {n} 封为待去重")
     exact = exact_dedup(store)
     pairs = near_dedup(store, cfg.dedup.auto_merge_threshold,
                        cfg.dedup.review_threshold)
@@ -102,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "parse":
             print(f"解析完成：{run_parse(store)} 封")
         elif args.command == "dedup":
-            run_dedup(store, cfg, use_llm=args.llm)
+            run_dedup(store, cfg, use_llm=args.llm, full=args.full)
         elif args.command == "export":
             print(json.dumps(export_all(store, cfg.export.output_dir),
                              ensure_ascii=False))

@@ -48,3 +48,17 @@ def test_report_command(tmp_path, monkeypatch, capsys):
     counts = json.loads(capsys.readouterr().out)
     assert counts["raw"] == 3
     assert counts["emails"] == 3
+
+
+def test_dedup_full_reruns(tmp_path, monkeypatch, capsys):
+    _setup_env(tmp_path, monkeypatch)
+    main(["--env", ".env", "--config", "config.yaml", "parse"])
+    main(["--env", ".env", "--config", "config.yaml", "dedup"])
+    capsys.readouterr()
+    assert main(["--env", ".env", "--config", "config.yaml", "dedup", "--full"]) == 0
+    out = capsys.readouterr().out
+    # 全量重跑后状态与首批一致（1、2 合并，3 unique）
+    store = Store(tmp_path / "data" / "emails.db")
+    counts = store.counts()["by_status"]
+    store.close()
+    assert counts.get("duplicate") == 1 and counts.get("kept") == 1 and counts.get("unique") == 1
