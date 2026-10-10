@@ -70,6 +70,21 @@ def test_duplicates_and_errors_not_exported(store, tmp_path):
     assert report["exported"] == 1
 
 
+def test_export_sanitizes_non_iso_date(store, tmp_path):
+    """恶意 Date 不得路径穿越：回退到 unknown-date/00000000-。"""
+    _insert(store, 1, "恶意日期", "x", status="unique",
+            content_hash="c" * 64, date="../../evil")
+    report = export_all(store, tmp_path / "out")
+    assert report["exported"] == 1
+    files = list((tmp_path / "out").rglob("*.md"))
+    assert len(files) == 1
+    rel = files[0].relative_to(tmp_path / "out")
+    assert ".." not in rel.parts
+    assert files[0].parent.name == "unknown-date"
+    assert files[0].name.startswith("00000000-")
+    assert not (tmp_path / "evil").exists()
+
+
 def test_export_idempotent_overwrite(store, tmp_path):
     _insert(store, 1, "同名主题", "x", status="unique", content_hash="b" * 64)
     export_all(store, tmp_path / "out")

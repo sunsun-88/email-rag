@@ -42,8 +42,11 @@ def export_all(store: Store, output_dir: str | Path) -> dict:
     count = 0
     for rec in store.iter_exportable():
         date = rec["date"] or ""
-        ym = date[:7] if len(date) >= 7 else "unknown-date"
-        day = date[:10].replace("-", "") if len(date) >= 10 else "00000000"
+        if re.fullmatch(r"\d{4}-\d{2}-\d{2}T.*", date):  # ISO 白名单，防路径穿越
+            ym = date[:7]
+            day = date[:10].replace("-", "")
+        else:
+            ym, day = "unknown-date", "00000000"
         folder_dir = out / slugify(rec["folder"], max_len=20) / ym
         folder_dir.mkdir(parents=True, exist_ok=True)
         name = f"{day}-{slugify(rec['subject'])}-{rec['content_hash'][:8]}.md"

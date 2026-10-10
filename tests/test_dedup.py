@@ -107,6 +107,20 @@ def test_same_sender_far_apart_not_compared(store):
     assert all(r["dedup_status"] == "unique" for r in rows)
 
 
+def test_near_dedup_mixed_timezone_dates(store):
+    """aware/naive Date 混合不得让 dedup 崩溃；无法比较即视为超出时间窗。"""
+    a = _insert(store, 1, subject="A刊", sender="news@x.com",
+                date="2024-03-01T08:00:00+08:00", simhash=BASE)
+    b = _insert(store, 2, subject="B刊", sender="news@x.com",
+                date="2024-03-02T08:00:00", simhash=_bits(3))  # 无时区
+    pairs = near_dedup(store)  # 不抛 TypeError
+    assert pairs == []
+    store.finalize_uniques()
+    rows = {r["id"]: r for r in store.iter_exportable()}
+    assert rows[a]["dedup_status"] == "unique"
+    assert rows[b]["dedup_status"] == "unique"
+
+
 def test_apply_review_duplicate_and_unique(store, tmp_path):
     a = _insert(store, 1, subject="同主题", simhash=BASE, body="短")
     b = _insert(store, 2, subject="同主题", simhash=_bits(4), body="更长的一封")

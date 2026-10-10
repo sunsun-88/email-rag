@@ -63,7 +63,10 @@ def _days_between(a: str, b: str) -> float:
     da, db = _parse_date(a), _parse_date(b)
     if da is None or db is None:
         return float("inf")
-    return abs((da - db).total_seconds()) / 86400.0
+    try:
+        return abs((da - db).total_seconds()) / 86400.0
+    except (TypeError, ValueError):
+        return float("inf")  # 时区混合（aware/naive）无法相减 → 视为超出时间窗
 
 
 def _candidate_pairs(records: list[dict]) -> set[tuple[int, int]]:

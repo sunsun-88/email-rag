@@ -89,15 +89,16 @@ class Store:
         return int(row[0] or 0)
 
     def iter_unparsed_raw(self, batch: int = 500) -> Iterator[dict]:
-        offset = 0
+        last_id = 0
         while True:
             rows = self._conn.execute(
-                "SELECT id, folder, mime_bytes FROM raw_emails WHERE parsed = 0 LIMIT ? OFFSET ?",
-                (batch, offset),
+                """SELECT id, folder, mime_bytes FROM raw_emails
+                   WHERE parsed = 0 AND id > ? ORDER BY id LIMIT ?""",
+                (last_id, batch),
             ).fetchall()
             if not rows:
                 return
-            offset += len(rows)
+            last_id = rows[-1]["id"]
             for r in rows:
                 yield {"id": r["id"], "folder": r["folder"], "mime_bytes": bytes(r["mime_bytes"])}
 

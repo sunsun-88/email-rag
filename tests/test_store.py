@@ -50,6 +50,18 @@ def test_iter_unparsed_raw_excludes_parsed(store):
     assert list(store.iter_unparsed_raw()) == []  # 幂等
 
 
+def test_iter_unparsed_raw_keyset_no_skip(store):
+    """消费中置位 parsed=1 时 OFFSET 翻页会漏行；keyset 分页须一轮收齐。"""
+    for uid in range(1, 6):
+        store.upsert_raw("INBOX", uid, f"raw-{uid}".encode())
+    processed = 0
+    for row in store.iter_unparsed_raw(batch=2):  # batch 小于总行数，边消费边置位
+        store.insert_email(row["id"], row["folder"], _parsed())
+        processed += 1
+    assert processed == 5
+    assert list(store.iter_unparsed_raw()) == []  # 一轮后无剩余
+
+
 def test_dedup_status_flow(store):
     r = store.upsert_raw("INBOX", 1, b"x")
     eid = store.insert_email(r, "INBOX", _parsed())
