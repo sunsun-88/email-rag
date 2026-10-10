@@ -14,7 +14,7 @@ from .dedup import (
 )
 from .exporter import export_all
 from .fetcher import Fetcher
-from .llm import create_llm
+from .llm import NullLLM, create_llm
 from .parser import parse_raw
 from .store import Store
 
@@ -64,11 +64,19 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
     if pairs:
         write_review_queue(store, pairs, cfg.review_queue_path)
         print(f"复核队列已写入 {cfg.review_queue_path}")
-        if use_llm and cfg.llm.provider != "none":
-            llm = create_llm(cfg.llm.provider, cfg.llm.api_key,
-                             cfg.llm.model, cfg.llm.base_url)
-            applied = judge_pairs_with_llm(store, pairs, llm, cfg.review_queue_path)
-            print(f"LLM 已裁定 {applied} 对")
+        if use_llm:
+            if not cfg.llm.api_key:
+                print("提示：已指定 --llm 但未配置 LLM_API_KEY，跳过自动裁定")
+            else:
+                llm = create_llm(cfg.llm.provider, cfg.llm.api_key,
+                                 cfg.llm.model, cfg.llm.base_url)
+                if isinstance(llm, NullLLM):
+                    print("提示：无法确定 LLM 服务端点，请配置 LLM_BASE_URL"
+                          "（或 LLM_PROVIDER=deepseek/openai 使用默认端点）")
+                else:
+                    applied = judge_pairs_with_llm(store, pairs, llm,
+                                                   cfg.review_queue_path)
+                    print(f"LLM 已裁定 {applied} 对")
         else:
             print("人工裁定后运行：email-rag dedup data/review_queue.json")
     finalized = store.finalize_uniques()

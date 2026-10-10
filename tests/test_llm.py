@@ -70,3 +70,16 @@ def test_create_llm_default_base_urls():
 def test_create_llm_explicit_base_url_honored():
     llm = create_llm("deepseek", "k", "deepseek-reasoner", "https://proxy.example.com")
     assert llm._url == "https://proxy.example.com/chat/completions"
+
+
+def test_create_llm_generic_without_provider():
+    """只填 api_key + model + base_url、provider 留空 → 通用 OpenAI 兼容客户端。"""
+    llm = create_llm("", "k", "my-model", "https://api.example.com")
+    assert llm._url == "https://api.example.com/chat/completions"
+    assert llm._model == "my-model"
+
+
+def test_create_llm_generic_requires_base_url():
+    """provider 留空且没有 base_url → 无法确定端点，返回 NullLLM。"""
+    assert isinstance(create_llm("", "k", "m", ""), NullLLM)
+    assert isinstance(create_llm("none", "k", "m", ""), NullLLM)

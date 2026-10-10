@@ -130,10 +130,12 @@ IMAP_USER=12345678@qq.com    # 完整邮箱地址
 IMAP_PASSWORD=abcdefghijklmno # 授权码，不是登录密码
 
 # ===== 可选：LLM 自动复核（见"进阶：LLM 自动复核"）=====
-LLM_PROVIDER=none            # none / deepseek / openai
+# 通用填法：填这三项即可，LLM_PROVIDER 留空
 LLM_API_KEY=
 LLM_MODEL=
 LLM_BASE_URL=
+# 偷懒填法：填 deepseek 或 openai，只用默认端点/模型（此时只填 LLM_API_KEY）
+LLM_PROVIDER=
 ```
 
 ### `config.yaml` 怎么填
@@ -414,13 +416,12 @@ preview 看起来像同一件事的转发/回复，通常选 `duplicate`。
 
 ## 进阶：LLM 自动复核
 
-如果你复核队列里的邮件太多，想让 AI 帮你判断"算不算重复"，可以在 `.env` 里
-配置一个 LLM：
+如果你复核队列里的邮件太多，想让 AI 帮你判断"算不算重复"，在 `.env` 里填三项即可：
 
 ```ini
-LLM_PROVIDER=deepseek        # deepseek / openai
 LLM_API_KEY=你的API密钥
 LLM_MODEL=deepseek-chat
+LLM_BASE_URL=https://api.deepseek.com
 ```
 
 然后：
@@ -432,7 +433,16 @@ email-rag dedup --llm
 它会把复核队列里每对邮件的文本片段发给 LLM 判断，自动填好 `verdict`。
 只发送每封邮件的前 300 个字符，不发完整邮件。判断完照样 `export`。
 
-> 这项功能调用外部 API 会产生少量费用，且默认推荐 DeepSeek 这类性价比高的服务。
+几点说明：
+
+- **任何 OpenAI 兼容的服务都能用**（DeepSeek、本地 vLLM、Ollama 等）——只要它提供
+  `/chat/completions` 接口，把对应的密钥、模型名、服务地址填进上面三项就行，
+  `LLM_PROVIDER` **不用填**。
+- `LLM_PROVIDER` 只在一种情况下有用：你懒得填地址和模型名时，写 `deepseek` 或
+  `openai` 用内置默认值（此时只填 `LLM_API_KEY` 即可）。
+- 填了 `--llm` 但密钥/地址没配好，程序会明确提示并跳过自动裁定，不会静默失败。
+
+> 这项功能调用外部 API 会产生少量费用，推荐 DeepSeek 这类性价比高的服务。
 > 介意的话就用人工复核，功能完全一样，只是多点几下。
 
 ---

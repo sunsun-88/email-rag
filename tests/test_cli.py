@@ -64,6 +64,27 @@ def test_dedup_full_reruns(tmp_path, monkeypatch, capsys):
     assert counts.get("duplicate") == 1 and counts.get("kept") == 1 and counts.get("unique") == 1
 
 
+def test_dedup_llm_without_api_key_warns(tmp_path, monkeypatch, capsys):
+    """--llm 但未配 LLM_API_KEY：明确提示跳过，而不是静默走人工分支。"""
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text("IMAP_HOST=h\nIMAP_USER=u\nIMAP_PASSWORD=p\n",
+                                   encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("fetch:\n  rate_limit_per_sec: 100\n",
+                                          encoding="utf-8")
+    store = Store(tmp_path / "data" / "emails.db")
+    store.init_schema()
+    store.upsert_raw("INBOX", 1, build_eml(subject="会议通知", message_id="<n1@t>",
+                                           body="会议改期到明天上午十点，请准时参加。"))
+    store.upsert_raw("INBOX", 2, build_eml(subject="会议通知", message_id="<n2@t>",
+                                           body="会议改期到明天上午十点半，请准时参加。"))
+    store.close()
+    main(["parse"])
+    capsys.readouterr()
+    assert main(["dedup", "--llm"]) == 0
+    out = capsys.readouterr().out
+    assert "LLM_API_KEY" in out
+
+
 def test_export_prune_flag(tmp_path, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch)
     main(["parse"])

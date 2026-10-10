@@ -41,7 +41,8 @@ def _extract_verdict(content: str) -> bool | None:
 
 class NullLLM:
     def judge_pair(self, text_a: str, text_b: str) -> bool:
-        raise LLMError("LLM_PROVIDER 未配置（none）")
+        raise LLMError("LLM 未配置：请填写 LLM_API_KEY + LLM_BASE_URL"
+                       "（或 LLM_PROVIDER=deepseek/openai 使用默认端点）")
 
 
 class _ChatCompletionsLLM:
@@ -93,8 +94,17 @@ class OpenAILLM(_ChatCompletionsLLM):
 
 
 def create_llm(provider: str, api_key: str, model: str, base_url: str):
+    """创建 LLM 客户端。provider 仅用于缺省端点/模型，显式给出 base_url 时无需填写。
+
+    - 通用填法（推荐）：LLM_API_KEY + LLM_MODEL + LLM_BASE_URL，provider 留空，
+      走 OpenAI 兼容的 /chat/completions 协议（DeepSeek/本地 vLLM/Ollama 等均兼容）。
+    - 偷懒填法：LLM_PROVIDER=deepseek 或 openai，只填 LLM_API_KEY，端点/模型用默认。
+    - 两者都缺端点信息（无 base_url 且无认识的 provider）→ NullLLM。
+    """
     if provider == "deepseek":
         return DeepSeekLLM(api_key, model, base_url)
     if provider == "openai":
         return OpenAILLM(api_key, model, base_url)
+    if api_key and base_url:
+        return _ChatCompletionsLLM(api_key, model, base_url)
     return NullLLM()
