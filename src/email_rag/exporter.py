@@ -60,7 +60,7 @@ def export_all(store: Store, output_dir: str | Path, prune: bool = False) -> dic
     pruned = 0
     if prune:
         for md in out.rglob("*.md"):
-            if md.resolve() not in written:
+            if md.is_file() and md.resolve() not in written:
                 md.unlink()
                 pruned += 1
     return {"exported": count, "pruned": pruned, "output_dir": str(out)}

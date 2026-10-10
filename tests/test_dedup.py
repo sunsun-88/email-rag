@@ -359,3 +359,58 @@ def test_write_review_queue_corrupt_verdict_and_dup_key(store, tmp_path):
     write_review_queue(store, [dup], queue)  # 键重复不膨胀
     data = json.loads(queue.read_text(encoding="utf-8"))
     assert [(p["a"], p["b"]) for p in data["pairs"]] == [(a, b)]
+
+
+# ---------- I-2 候选对仅含 pending ----------
+
+def test_candidate_pairs_skip_anchor_only_groups(store):
+    base = (1 << 64) - 1
+    for i in range(1, 501):
+        eid = _insert(store, i, subject="同一大主题", sender=f"u{i}@x.com", simhash=base)
+        store.update_dedup(eid, "kept")
+    n = _insert(store, 501, subject="独立主题", sender="solo@x.com", simhash=base)
+    pool = [r for r in store.iter_dedup_candidates()
+            if r["dedup_status"] in ("pending", "kept", "unique")
+            and r["norm_text"].strip() and r["simhash"]]
+    pairs = dedup_module._candidate_pairs(pool, {n})
+    assert pairs == set()
+
+
+def test_candidate_pairs_mixed_group_keeps_pending_pairs(store):
+    base = (1 << 64) - 1
+    old = _insert(store, 1, subject="同主题", sender="u1@x.com", simhash=base)
+    store.update_dedup(old, "kept")
+    n1 = _insert(store, 2, subject="同主题", sender="u2@x.com", simhash=base ^ 0b111)
+    n2 = _insert(store, 3, subject="同主题", sender="u3@x.com", simhash=base ^ 0b11)
+    pool = [r for r in store.iter_dedup_candidates()
+            if r["dedup_status"] in ("pending", "kept", "unique")
+            and r["norm_text"].strip() and r["simhash"]]
+    pairs = dedup_module._candidate_pairs(pool, {n1, n2})
+    assert pairs == {(min(n1, old), max(n1, old)),
+                     (min(n2, old), max(n2, old)), (n1, n2)}
+
+
+# ---------- M-1 队列条目类型防御 ----------
+
+def test_write_review_queue_drops_malformed_entries(store, tmp_path):
+    base = (1 << 64) - 1
+    a1 = _insert(store, 1, subject="甲主题", simhash=base)
+    b1 = _insert(store, 2, subject="甲主题", simhash=base ^ 0b1111)
+    q = tmp_path / "q.json"
+    q.write_text(json.dumps({"pairs": [{"a": [1], "b": 2, "preview_a": "",
+                                          "preview_b": "", "similarity": 0.9,
+                                          "subject": "x"}]},
+                            ensure_ascii=False), encoding="utf-8")
+    write_review_queue(store, near_dedup(store), q)
+    data = json.loads(q.read_text(encoding="utf-8"))
+    assert all(isinstance(p["a"], int) and isinstance(p["b"], int)
+               for p in data["pairs"])
+    assert sorted((p["a"], p["b"]) for p in data["pairs"]) == [(a1, b1)]
+
+
+def test_apply_review_skips_malformed_entries(store, tmp_path):
+    q = tmp_path / "q.json"
+    q.write_text(json.dumps({"pairs": [{"a": [1], "b": 2,
+                                        "verdict": "duplicate"}]}),
+                 encoding="utf-8")
+    assert apply_review(store, q) == 0

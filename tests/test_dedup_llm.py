@@ -70,3 +70,29 @@ def test_llm_failure_pair_left_for_human(store, tmp_path):
     applied = judge_pairs_with_llm(store, pairs, FlakyLLM(), queue)
     assert applied == 0
     assert store.get_email(a)["dedup_status"] == "review"  # 保持待复核
+
+
+def test_llm_judges_backlog_and_new_pairs(store, tmp_path):
+    # 旧积压 (1,2) 已入队未裁定；本轮产生新对 (3,4)
+    a1 = _insert(store, 1, subject="甲主题", simhash=(1 << 64) - 1)
+    b1 = _insert(store, 2, subject="甲主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    queue = tmp_path / "q.json"
+    write_review_queue(store, near_dedup(store), queue)
+    c = _insert(store, 3, subject="乙主题", simhash=(1 << 64) - 1)
+    d = _insert(store, 4, subject="乙主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    pairs2 = near_dedup(store)
+
+    class YesLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def judge_pair(self, text_a, text_b):
+            self.calls += 1
+            return True
+
+    llm = YesLLM()
+    applied = judge_pairs_with_llm(store, pairs2, llm, queue)
+    assert llm.calls == 2       # 积压 + 新对都裁定
+    assert applied == 2
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    assert all(p.get("verdict") == "duplicate" for p in data["pairs"])

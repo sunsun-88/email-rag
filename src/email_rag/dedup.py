@@ -150,8 +150,21 @@ def _days_between(a: str, b: str) -> float:
     return _days_between_dt(_parse_date(a), _parse_date(b))
 
 
-def _candidate_pairs(records: list[dict]) -> set[tuple[int, int]]:
+def _candidate_pairs(records: list[dict],
+                     pending_ids: set[int] | None = None) -> set[tuple[int, int]]:
+    if pending_ids is None:  # 兼容旧语义：未指定时视为全部记录都是待比对邮件
+        pending_ids = {r["id"] for r in records}
     pairs: set[tuple[int, int]] = set()
+
+    def _add(a_id: int, b_id: int) -> bool:
+        key = (min(a_id, b_id), max(a_id, b_id))
+        if key in pairs:
+            return False
+        if key[0] not in pending_ids and key[1] not in pending_ids:
+            return False  # 锚-锚对不比对：候选对至少一方是本轮待比对邮件
+        pairs.add(key)
+        return True
+
     by_subject: dict[str, list[dict]] = {}
     by_sender: dict[str, list[dict]] = {}
     for r in records:
@@ -161,18 +174,22 @@ def _candidate_pairs(records: list[dict]) -> set[tuple[int, int]]:
         by_sender.setdefault(r["sender"], []).append(r)
 
     for subject, group in by_subject.items():
+        if not any(r["id"] in pending_ids for r in group):
+            continue  # 无 pending 的纯锚组整组跳过（核心优化）
         if len(group) * (len(group) - 1) // 2 > _MAX_PAIRS_PER_GROUP:
             log.warning("主题组 %r 含 %d 封，候选对超上限 %d，退化为相邻对窗口",
                         subject[:80], len(group), _MAX_PAIRS_PER_GROUP)
             ordered = sorted(group, key=lambda r: (r["date"], r["id"]))
             for a, b in zip(ordered, ordered[1:]):
-                pairs.add((min(a["id"], b["id"]), max(a["id"], b["id"])))
+                _add(a["id"], b["id"])
             continue
         for a, b in combinations(group, 2):
-            pairs.add((min(a["id"], b["id"]), max(a["id"], b["id"])))
+            _add(a["id"], b["id"])
 
     date_cache: dict[int, object] = {r["id"]: _parse_date(r["date"]) for r in records}
     for group in by_sender.values():
+        if not any(r["id"] in pending_ids for r in group):
+            continue
         group.sort(key=lambda r: (r["date"], r["id"]))
         made = 0
         stop = False
@@ -183,13 +200,13 @@ def _candidate_pairs(records: list[dict]) -> set[tuple[int, int]]:
                 if _days_between_dt(date_cache[a["id"]],
                                     date_cache[b["id"]]) > _SENDER_WINDOW_DAYS:
                     break
-                if made >= _MAX_PAIRS_PER_GROUP:
-                    log.warning("发件人组 %r 候选对达到上限 %d，停止扩展",
-                                a["sender"], _MAX_PAIRS_PER_GROUP)
-                    stop = True
-                    break
-                pairs.add((min(a["id"], b["id"]), max(a["id"], b["id"])))
-                made += 1
+                if _add(a["id"], b["id"]):
+                    made += 1
+                    if made >= _MAX_PAIRS_PER_GROUP:
+                        log.warning("发件人组 %r 候选对达到上限 %d，停止扩展",
+                                    a["sender"], _MAX_PAIRS_PER_GROUP)
+                        stop = True
+                        break
     return pairs
 
 
@@ -200,9 +217,8 @@ def near_dedup(store: Store, auto_threshold: float = 0.95,
             and r["norm_text"].strip() and r["simhash"]]
     pending_ids = {r["id"] for r in pool if r["dedup_status"] == "pending"}
     by_id = {r["id"]: r for r in pool}
-    # 候选对至少一方是新邮件；锚-锚对不比对（防御）
-    pairs = {p for p in _candidate_pairs(pool)
-             if p[0] in pending_ids or p[1] in pending_ids}
+    # 生成期已保证候选对至少一方是 pending（锚-锚对不再产生）
+    pairs = _candidate_pairs(pool, pending_ids)
 
     judged = []
     for ida, idb in pairs:
@@ -298,8 +314,10 @@ def write_review_queue(store: Store, pairs: list[ReviewPair], path: str | Path) 
     merged: list[dict] = []
     seen: set[tuple] = set()
     for item in _load_queue_items(out):
-        if not isinstance(item, dict) or item.get("verdict"):
-            continue  # 已裁定条目清出
+        if (not isinstance(item, dict) or item.get("verdict")
+                or not isinstance(item.get("a"), int)
+                or not isinstance(item.get("b"), int)):
+            continue  # 已裁定条目清出；a/b 非 int 的畸形条目一并丢弃
         key = _queue_key(item)
         if key in seen:
             continue
@@ -324,9 +342,13 @@ def apply_review(store: Store, queue_path: str | Path) -> int:
     data = json.loads(Path(queue_path).read_text(encoding="utf-8"))
     applied = 0
     for item in data.get("pairs", []):
+        if not isinstance(item, dict):
+            continue
         verdict = item.get("verdict")
         if verdict not in ("duplicate", "unique"):
             continue
+        if not isinstance(item.get("a"), int) or not isinstance(item.get("b"), int):
+            continue  # 畸形条目不参与裁定
         a, b = store.get_email(item["a"]), store.get_email(item["b"])
         if not a or not b:
             continue
@@ -357,18 +379,27 @@ def apply_review(store: Store, queue_path: str | Path) -> int:
 
 def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
                          queue_path: str | Path) -> int:
-    """逐对 LLM 裁定并写回 verdict；失败的 pair 保持 review 留待人工。"""
+    """逐条 LLM 裁定并写回 verdict；失败条目保持无 verdict 留待人工。
+
+    队列文件是权威来源：合并写后含历次积压条目，与本轮 pairs 并无一一
+    对应关系，故不按位置 zip 配对，而是遍历文件中所有无 verdict 条目逐条
+    裁定（preview 取自条目自身）。pairs 参数保留以兼容既有调用，同时把
+    尚未入队的新对并入队列，保证本轮新对不被漏判。
+    """
     path = Path(queue_path)
+    if pairs:
+        write_review_queue(store, pairs, path)
     data = json.loads(path.read_text(encoding="utf-8"))
-    for item, pair in zip(data.get("pairs", []), pairs):
-        if item.get("verdict"):
+    for item in data.get("pairs", []):
+        if not isinstance(item, dict) or item.get("verdict"):
             continue
         try:
             verdict = llm.judge_pair(item.get("preview_a", ""),
                                      item.get("preview_b", ""))
             item["verdict"] = "duplicate" if verdict else "unique"
         except Exception as exc:  # noqa: BLE001
-            log.warning("LLM 裁定失败 pair(%s, %s): %s", pair.a, pair.b, exc)
+            log.warning("LLM 裁定失败 pair(%s, %s): %s",
+                        item.get("a"), item.get("b"), exc)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                     encoding="utf-8")
     return apply_review(store, path)

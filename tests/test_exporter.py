@@ -115,3 +115,12 @@ def test_export_prune_removes_stale(store, tmp_path):
     assert not stale.exists()
     assert report["pruned"] == 1
     assert len(list(out.rglob("*.md"))) == 1
+
+
+def test_export_prune_skips_md_directories(store, tmp_path):
+    _insert(store, 1, "主题甲", "正文", status="unique", content_hash="a" * 64)
+    out = tmp_path / "out"
+    d = out / "inbox" / "2024-03" / "folder.md"
+    d.mkdir(parents=True)
+    export_all(store, out, prune=True)
+    assert d.is_dir()
