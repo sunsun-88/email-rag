@@ -1,0 +1,11 @@
+fetch:
+  folders: all
+  exclude: [Junk, Trash, 垃圾邮件, 已删除]
+  rate_limit_per_sec: 2
+  reconnect_max: 5
+dedup:
+  auto_merge_threshold: 0.95
+  review_threshold: 0.75
+  llm_batch_size: 20
+export:
+  output_dir: output

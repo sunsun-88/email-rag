@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "email-rag"
+version = "0.1.0"
+description = "Fetch all IMAP emails, deduplicate, export RAG-ready Markdown"
+requires-python = ">=3.10"
+dependencies = [
+    "imapclient>=3.3",
+    "html2text>=2024.2.26",
+    "pyyaml>=6.0",
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=8.0"]
+
+[project.scripts]
+email-rag = "email_rag.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
