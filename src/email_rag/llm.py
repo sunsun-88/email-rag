@@ -7,9 +7,9 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 _MAX_TEXT_LEN = 2000  # 每封仅发送截断后的规范化文本片段（spec §12 最小化原则）
-_SINGLE_MAX_TOKENS = 512        # 单对裁定的输出上限（含 reasoning 模型思考开销）
-_DEFAULT_TOKENS_PER_PAIR = 200  # 批量裁定每对的输出预算（实测模型约 167/对）
-_REASONING_HEADROOM = 512     # 批量输出预算的思考余量（reasoning_content 开销）
+_SINGLE_MAX_TOKENS = 1024       # 单对裁定的输出上限（reasoning 模型思考开销大）
+_DEFAULT_TOKENS_PER_PAIR = 384  # 批量裁定每对的输出预算（实测 reasoning 模型约 300/对）
+_REASONING_HEADROOM = 1024    # 批量输出预算的思考余量（reasoning_content 开销）
 
 
 def _message_text(message: dict) -> str:

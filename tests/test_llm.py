@@ -151,7 +151,7 @@ def test_judge_batch_success_and_token_cap(monkeypatch):
     llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
     result = llm.judge_batch([("a1", "b1"), ("a2", "b2"), ("a3", "b3")])
     assert result == [True, False, True]
-    assert captured["body"]["max_tokens"] == 1112  # 200×3 + 512
+    assert captured["body"]["max_tokens"] == 2176  # 384×3 + 1024
 
 
 def test_judge_batch_reads_reasoning_content(monkeypatch):
