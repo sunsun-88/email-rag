@@ -1,0 +1,53 @@
+name: test
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: 安装
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e ".[dev]"
+      - name: 跑测试
+        run: python -m pytest -q --cov=email_rag --cov-report=term
+
+  leak-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: 凭据文件不得进入版本库
+        run: |
+          if git ls-files --error-unmatch .env 2>/dev/null; then
+            echo "::error::.env 不允许进入版本库"; exit 1
+          fi
+          echo "OK: .env 未被跟踪"
+      - name: 内网地址扫描
+        run: |
+          if git grep -n -I -E "192\.168\.[0-9]+\.[0-9]+" -- .; then
+            echo "::error::检测到内网地址"; exit 1
+          fi
+          echo "OK: 无内网地址"
+      - name: 疑似密钥扫描
+        run: |
+          if git grep -n -I -E "(sk-[A-Za-z0-9]{20}|tvly-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}|github_pat_)" -- .; then
+            echo "::error::检测到疑似密钥"; exit 1
+          fi
+          echo "OK: 无密钥字面量"
