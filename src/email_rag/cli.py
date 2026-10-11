@@ -107,7 +107,8 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
             print("提示：复核队列无待裁定条目，无需 LLM")
         else:
             llm = create_llm(cfg.llm.provider, cfg.llm.api_key,
-                             cfg.llm.model, cfg.llm.base_url)
+                             cfg.llm.model, cfg.llm.base_url,
+                             disable_thinking=cfg.llm.disable_thinking)
             if isinstance(llm, NullLLM):
                 print("提示：无法确定 LLM 服务端点，请配置 LLM_BASE_URL"
                       "（或 LLM_PROVIDER=deepseek/openai 使用默认端点）")

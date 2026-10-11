@@ -40,38 +40,46 @@ class LLMError(Exception):
 
 
 def _extract_verdict(content: str) -> bool | None:
-    """从响应中提取 {"duplicate": bool}；失败返回 None。"""
-    start = content.find("{")
+    """从响应中提取 {"duplicate": bool}；从后往前找最末一个可解析对象。"""
     end = content.rfind("}")
-    if start == -1 or end == -1 or end <= start:
-        return None
-    try:
-        data = json.loads(content[start: end + 1])
-    except json.JSONDecodeError:
-        return None
-    if isinstance(data, dict) and isinstance(data.get("duplicate"), bool):
-        return data["duplicate"]
+    while end != -1:
+        start = content.rfind("{", 0, end + 1)
+        while start != -1:
+            try:
+                data = json.loads(content[start:end + 1])
+            except json.JSONDecodeError:
+                start = content.rfind("{", 0, start)
+                continue
+            if isinstance(data, dict) and isinstance(data.get("duplicate"), bool):
+                return data["duplicate"]
+            start = content.rfind("{", 0, start)
+        end = content.rfind("}", 0, end)
     return None
 
 
 def _extract_batch_verdicts(content: str, expected: int) -> list[bool | None]:
-    """从批量响应中提取判定数组；缺失/非法项为 None。长度恒等于 expected。"""
-    start = content.find("[")
-    end = content.rfind("]")
+    """从批量响应中提取判定数组；从后往前找最末一个可解析 JSON 数组
+    （reasoning 段常含示例括号，首括号+尾括号切片会跨垃圾文本）。"""
     results: list[bool | None] = [None] * expected
-    if start == -1 or end == -1 or end <= start:
+    end = content.rfind("]")
+    if end == -1:
         return results
-    try:
-        data = json.loads(content[start: end + 1])
-    except json.JSONDecodeError:
-        return results
-    if not isinstance(data, list):
-        return results
-    for item in data:
-        if isinstance(item, dict):
-            idx, dup = item.get("i"), item.get("dup")
-            if isinstance(idx, int) and isinstance(dup, bool) and 0 <= idx < expected:
-                results[idx] = dup
+    start = content.rfind("[", 0, end + 1)
+    while start != -1:
+        try:
+            data = json.loads(content[start:end + 1])
+        except json.JSONDecodeError:
+            start = content.rfind("[", 0, start)
+            continue
+        if isinstance(data, list):
+            for item in data:
+                if isinstance(item, dict):
+                    idx, dup = item.get("i"), item.get("dup")
+                    if isinstance(idx, int) and isinstance(dup, bool) \
+                            and 0 <= idx < expected:
+                        results[idx] = dup
+            return results
+        start = content.rfind("[", 0, start)
     return results
 
 
@@ -84,12 +92,15 @@ class NullLLM:
 class _ChatCompletionsLLM:
     """共享的 /chat/completions 调用骨架（stdlib urllib，无 SDK 依赖）。"""
 
-    def __init__(self, api_key: str, model: str, base_url: str):
+    def __init__(self, api_key: str, model: str, base_url: str,
+                 disable_thinking: bool = True):
         self._url = f"{base_url.rstrip('/')}/chat/completions"
         self._headers = {"Content-Type": "application/json"}
         if api_key:  # 本地服务（vLLM 等）可不带密钥
             self._headers["Authorization"] = f"Bearer {api_key}"
         self._model = model
+        self._extra = ({"chat_template_kwargs": {"enable_thinking": False}}
+                       if disable_thinking else {})
 
     def judge_pair(self, text_a: str, text_b: str) -> bool:
         prompt = _PROMPT_TEMPLATE.format(
@@ -100,6 +111,7 @@ class _ChatCompletionsLLM:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
             "max_tokens": _SINGLE_MAX_TOKENS,
+            **self._extra,
         }
         request = urllib.request.Request(
             self._url, data=json.dumps(payload).encode("utf-8"),
@@ -136,6 +148,7 @@ class _ChatCompletionsLLM:
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
             "max_tokens": budget,
+            **self._extra,
         }
         request = urllib.request.Request(
             self._url, data=json.dumps(payload).encode("utf-8"),
@@ -149,19 +162,24 @@ class _ChatCompletionsLLM:
 
 class DeepSeekLLM(_ChatCompletionsLLM):
     def __init__(self, api_key: str, model: str = "deepseek-chat",
-                 base_url: str = "https://api.deepseek.com"):
+                 base_url: str = "https://api.deepseek.com",
+                 disable_thinking: bool = True):
         super().__init__(api_key, model or "deepseek-chat",
-                         base_url or "https://api.deepseek.com")
+                         base_url or "https://api.deepseek.com",
+                         disable_thinking)
 
 
 class OpenAILLM(_ChatCompletionsLLM):
     def __init__(self, api_key: str, model: str = "gpt-4o-mini",
-                 base_url: str = "https://api.openai.com/v1"):
+                 base_url: str = "https://api.openai.com/v1",
+                 disable_thinking: bool = True):
         super().__init__(api_key, model or "gpt-4o-mini",
-                         base_url or "https://api.openai.com/v1")
+                         base_url or "https://api.openai.com/v1",
+                         disable_thinking)
 
 
-def create_llm(provider: str, api_key: str, model: str, base_url: str):
+def create_llm(provider: str, api_key: str, model: str, base_url: str,
+               disable_thinking: bool = True):
     """创建 LLM 客户端。provider 仅用于缺省端点/模型，显式给出 base_url 时无需填写。
 
     - 通用填法（推荐）：LLM_API_KEY + LLM_MODEL + LLM_BASE_URL，provider 留空，
@@ -171,9 +189,9 @@ def create_llm(provider: str, api_key: str, model: str, base_url: str):
     - 两者都缺端点信息（无 base_url 且无认识的 provider）→ NullLLM。
     """
     if provider == "deepseek":
-        return DeepSeekLLM(api_key, model, base_url)
+        return DeepSeekLLM(api_key, model, base_url, disable_thinking)
     if provider == "openai":
-        return OpenAILLM(api_key, model, base_url)
+        return OpenAILLM(api_key, model, base_url, disable_thinking)
     if base_url:
-        return _ChatCompletionsLLM(api_key, model, base_url)
+        return _ChatCompletionsLLM(api_key, model, base_url, disable_thinking)
     return NullLLM()

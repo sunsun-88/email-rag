@@ -185,6 +185,33 @@ def test_judge_batch_reads_reasoning_content(monkeypatch):
     assert llm.judge_batch([("a", "b")]) == [True]
 
 
+def test_extractor_backward_search_with_brackets_in_reasoning():
+    """reasoning 段含示例括号时，必须取最末一个可解析数组（而非首括号切片）。"""
+    from email_rag.llm import _extract_batch_verdicts, _extract_verdict
+
+    text = '思考：形如 [{"i": 0}] 的格式……引用 【第0组】……最终：[{"i": 0, "dup": true}, {"i": 1, "dup": false}]'
+    assert _extract_batch_verdicts(text, 2) == [True, False]
+    single = '思考 {"duplicate": true} 的格式……结论：{"duplicate": false}'
+    assert _extract_verdict(single) is False
+
+
+def test_disable_thinking_kwarg(monkeypatch):
+    """disable_thinking=True 时请求带 enable_thinking=False（Qwen3 类推理模型提速降本）。"""
+    from email_rag.llm import _ChatCompletionsLLM
+
+    captured = {}
+    _fake_urlopen_capturing(monkeypatch, captured, '[{"i": 0, "dup": true}]')
+    llm = _ChatCompletionsLLM("k", "m", "http://h/v1", disable_thinking=True)
+    llm.judge_batch([("a", "b")])
+    assert captured["body"]["chat_template_kwargs"] == {"enable_thinking": False}
+
+    captured2 = {}
+    _fake_urlopen_capturing(monkeypatch, captured2, '{"duplicate": true}')
+    llm2 = _ChatCompletionsLLM("k", "m", "http://h/v1", disable_thinking=False)
+    llm2.judge_pair("a", "b")
+    assert "chat_template_kwargs" not in captured2["body"]
+
+
 def test_judge_batch_custom_max_tokens(monkeypatch):
     """max_tokens 可显式覆盖（judge_pairs_with_llm 的 output_tokens_per_pair 用）。"""
     from email_rag.llm import _ChatCompletionsLLM

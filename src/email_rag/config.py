@@ -22,6 +22,7 @@ class LLMConfig:
     api_key: str = ""
     model: str = ""
     base_url: str = ""
+    disable_thinking: bool = True  # Qwen3 类推理模型关思考（提速降本）；服务报错则设 false
 
 
 @dataclass
@@ -81,6 +82,8 @@ def load_config(env_path: str | Path = ".env", config_path: str | Path = "config
         api_key=os.environ.get("LLM_API_KEY", ""),
         model=os.environ.get("LLM_MODEL", ""),
         base_url=os.environ.get("LLM_BASE_URL", ""),
+        disable_thinking=os.environ.get("LLM_DISABLE_THINKING", "true").lower()
+        not in ("0", "false", "no", "off"),
     )
 
     fetch, dedup, export = FetchConfig(), DedupConfig(), ExportConfig()
