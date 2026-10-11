@@ -102,6 +102,46 @@ def test_paths_resolve_relative_to_config_dir(tmp_path, monkeypatch, capsys):
     assert not (elsewhere / "data").exists()
 
 
+def test_dedup_llm_adjudicates_existing_backlog(tmp_path, monkeypatch, capsys):
+    """队列已有未裁定条目（本轮无新邮件）时，--llm 也要补裁积压。"""
+    import io
+
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "IMAP_HOST=h\nIMAP_USER=u\nIMAP_PASSWORD=p\n"
+        "LLM_API_KEY=k\nLLM_MODEL=m\nLLM_BASE_URL=https://api.example.com\n",
+        encoding="utf-8")
+    (tmp_path / "config.yaml").write_text("fetch:\n  rate_limit_per_sec: 100\n",
+                                          encoding="utf-8")
+    store = Store(tmp_path / "data" / "emails.db")
+    store.init_schema()
+    store.upsert_raw("INBOX", 1, build_eml(subject="会议通知", message_id="<n1@t>",
+                                           body="会议改期到明天上午十点，请准时参加。"))
+    store.upsert_raw("INBOX", 2, build_eml(subject="会议通知", message_id="<n2@t>",
+                                           body="会议改期到明天上午十点半，请准时参加。"))
+    store.close()
+    main(["parse"])
+    main(["dedup"])  # 第一轮：产生 1 对复核队列（未裁定）
+    capsys.readouterr()
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    payload = json.dumps(
+        {"choices": [{"message": {"content": '{"duplicate": true}'}}]}
+    ).encode("utf-8")
+    monkeypatch.setattr("urllib.request.urlopen",
+                        lambda request, timeout=None: FakeResp(payload))
+
+    assert main(["dedup", "--llm"]) == 0  # 第二轮：无新邮件，补裁积压
+    out = capsys.readouterr().out
+    assert "LLM 已裁定 1 对" in out
+
+
 def test_export_prune_flag(tmp_path, monkeypatch, capsys):
     _setup_env(tmp_path, monkeypatch)
     main(["parse"])

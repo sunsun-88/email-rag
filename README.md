@@ -475,7 +475,8 @@ LLM_BASE_URL=https://api.deepseek.com
 email-rag dedup --llm
 ```
 
-它会把复核队列里每对邮件的文本片段发给 LLM 判断，自动填好 `verdict`。
+它会把复核队列里每对邮件的文本片段发给 LLM 判断，自动填好 `verdict`
+（包括往轮积压的未裁定条目——即使没有新邮件，重跑 `dedup --llm` 也会补裁队列）。
 只发送每封邮件的前 300 个字符，不发完整邮件。判断完照样 `export`。
 
 几点说明：

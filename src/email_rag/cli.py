@@ -70,6 +70,19 @@ def run_parse(store: Store) -> int:
     return count
 
 
+def _queue_has_unjudged(path: str | Path) -> bool:
+    """队列文件是否存在且含有未裁定（无 verdict）条目。"""
+    try:
+        data = json.loads(Path(path).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return False
+    items = data.get("pairs") if isinstance(data, dict) else None
+    if not isinstance(items, list):
+        return False
+    return any(isinstance(item, dict) and not item.get("verdict")
+               for item in items)
+
+
 def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
               full: bool = False) -> None:
     if full:
@@ -83,21 +96,24 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
     if pairs:
         write_review_queue(store, pairs, cfg.review_queue_path)
         print(f"复核队列已写入 {cfg.review_queue_path}")
-        if use_llm:
-            if not cfg.llm.api_key:
-                print("提示：已指定 --llm 但未配置 LLM_API_KEY，跳过自动裁定")
-            else:
-                llm = create_llm(cfg.llm.provider, cfg.llm.api_key,
-                                 cfg.llm.model, cfg.llm.base_url)
-                if isinstance(llm, NullLLM):
-                    print("提示：无法确定 LLM 服务端点，请配置 LLM_BASE_URL"
-                          "（或 LLM_PROVIDER=deepseek/openai 使用默认端点）")
-                else:
-                    applied = judge_pairs_with_llm(store, pairs, llm,
-                                                   cfg.review_queue_path)
-                    print(f"LLM 已裁定 {applied} 对")
-        else:
+        if not use_llm:
             print("人工裁定后运行：email-rag dedup data/review_queue.json")
+    if use_llm:
+        # 既裁本轮新对，也补裁队列文件里往轮积压的未裁定条目（增量场景）
+        if not cfg.llm.api_key:
+            print("提示：已指定 --llm 但未配置 LLM_API_KEY，跳过自动裁定")
+        elif not pairs and not _queue_has_unjudged(cfg.review_queue_path):
+            print("提示：复核队列无待裁定条目，无需 LLM")
+        else:
+            llm = create_llm(cfg.llm.provider, cfg.llm.api_key,
+                             cfg.llm.model, cfg.llm.base_url)
+            if isinstance(llm, NullLLM):
+                print("提示：无法确定 LLM 服务端点，请配置 LLM_BASE_URL"
+                      "（或 LLM_PROVIDER=deepseek/openai 使用默认端点）")
+            else:
+                applied = judge_pairs_with_llm(store, pairs, llm,
+                                               cfg.review_queue_path)
+                print(f"LLM 已裁定 {applied} 对")
     finalized = store.finalize_uniques()
     print(f"标记 unique {finalized} 封")
 
