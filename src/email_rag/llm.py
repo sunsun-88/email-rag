@@ -50,10 +50,9 @@ class _ChatCompletionsLLM:
 
     def __init__(self, api_key: str, model: str, base_url: str):
         self._url = f"{base_url.rstrip('/')}/chat/completions"
-        self._headers = {
-            "Authorization": f"Bearer {api_key}",
-            "Content-Type": "application/json",
-        }
+        self._headers = {"Content-Type": "application/json"}
+        if api_key:  # 本地服务（vLLM 等）可不带密钥
+            self._headers["Authorization"] = f"Bearer {api_key}"
         self._model = model
 
     def judge_pair(self, text_a: str, text_b: str) -> bool:
@@ -98,6 +97,7 @@ def create_llm(provider: str, api_key: str, model: str, base_url: str):
 
     - 通用填法（推荐）：LLM_API_KEY + LLM_MODEL + LLM_BASE_URL，provider 留空，
       走 OpenAI 兼容的 /chat/completions 协议（DeepSeek/本地 vLLM/Ollama 等均兼容）。
+      本地服务无需密钥时，LLM_API_KEY 可留空，只填地址和模型。
     - 偷懒填法：LLM_PROVIDER=deepseek 或 openai，只填 LLM_API_KEY，端点/模型用默认。
     - 两者都缺端点信息（无 base_url 且无认识的 provider）→ NullLLM。
     """
@@ -105,6 +105,6 @@ def create_llm(provider: str, api_key: str, model: str, base_url: str):
         return DeepSeekLLM(api_key, model, base_url)
     if provider == "openai":
         return OpenAILLM(api_key, model, base_url)
-    if api_key and base_url:
+    if base_url:
         return _ChatCompletionsLLM(api_key, model, base_url)
     return NullLLM()

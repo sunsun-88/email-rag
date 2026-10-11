@@ -83,3 +83,37 @@ def test_create_llm_generic_requires_base_url():
     """provider 留空且没有 base_url → 无法确定端点，返回 NullLLM。"""
     assert isinstance(create_llm("", "k", "m", ""), NullLLM)
     assert isinstance(create_llm("none", "k", "m", ""), NullLLM)
+
+
+def test_create_llm_local_server_without_api_key():
+    """本地 OpenAI 兼容服务（vLLM 等）通常不需要 key：只给 base_url 即可，
+    且请求头不应带 Authorization。"""
+    llm = create_llm("", "", "m", "http://192.0.2.10:8080/v1")
+    assert llm._url == "http://192.0.2.10:8080/v1/chat/completions"
+    assert "Authorization" not in llm._headers
+
+
+def test_local_llm_judge_pair_sends_no_auth_header(monkeypatch):
+    import io
+    import json as jsonlib
+
+    captured = {}
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["headers"] = dict(request.header_items())
+        payload = jsonlib.dumps(
+            {"choices": [{"message": {"content": '{"duplicate": true}'}}]}
+        ).encode("utf-8")
+        return FakeResp(payload)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    llm = create_llm("", "", "m", "http://h/v1")
+    assert llm.judge_pair("a", "b") is True
+    assert captured["headers"].get("Authorization") is None

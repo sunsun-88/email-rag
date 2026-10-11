@@ -100,8 +100,9 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
             print("人工裁定后运行：email-rag dedup data/review_queue.json")
     if use_llm:
         # 既裁本轮新对，也补裁队列文件里往轮积压的未裁定条目（增量场景）
-        if not cfg.llm.api_key:
-            print("提示：已指定 --llm 但未配置 LLM_API_KEY，跳过自动裁定")
+        if not (cfg.llm.api_key or cfg.llm.base_url):
+            print("提示：已指定 --llm 但未配置 LLM"
+                  "（需要 LLM_BASE_URL 或 LLM_API_KEY），跳过自动裁定")
         elif not pairs and not _queue_has_unjudged(cfg.review_queue_path):
             print("提示：复核队列无待裁定条目，无需 LLM")
         else:
