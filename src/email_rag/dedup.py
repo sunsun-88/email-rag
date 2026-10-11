@@ -452,13 +452,29 @@ def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
                 log.warning("LLM 批量裁定失败（%d 对）: %s", len(chunk), exc)
             else:
                 if all(v is None for v in verdicts):
-                    consecutive_failures += 1
-                    log.warning("LLM 批量裁定无有效结果（%d 对）", len(chunk))
+                    # 批量响应截断/解析失败（输出过长常见）：降级逐对裁定，
+                    # 单对调用输出预算小，几乎不会截断
+                    recovered = 0
+                    for it in chunk:
+                        try:
+                            v = llm.judge_pair(it.get("preview_a", ""),
+                                               it.get("preview_b", ""))
+                        except Exception as exc2:  # noqa: BLE001
+                            consecutive_failures += 1
+                            log.warning("LLM 逐对降级裁定失败 pair(%s, %s): %s",
+                                        it.get("a"), it.get("b"), exc2)
+                            continue
+                        it["verdict"] = "duplicate" if v else "unique"
+                        consecutive_failures = 0
+                        recovered += 1
+                    if recovered:
+                        log.info("批量裁定失败后逐对降级成功 %d/%d 对",
+                                 recovered, len(chunk))
                 else:
                     consecutive_failures = 0
-                for it, v in zip(chunk, verdicts):
-                    if v is not None:
-                        it["verdict"] = "duplicate" if v else "unique"
+                    for it, v in zip(chunk, verdicts):
+                        if v is not None:
+                            it["verdict"] = "duplicate" if v else "unique"
             since_save += len(chunk)
         else:
             item = pending.pop(0)

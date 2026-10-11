@@ -154,6 +154,36 @@ def test_llm_band_auto_resolves_confident_ends(store, tmp_path):
     assert llm.calls == 1  # 只有 0.85 那一对真正调用了 LLM
 
 
+def test_batch_failure_falls_back_to_single_calls(store, tmp_path):
+    """批量解析失败（如输出截断）→ 降级逐对裁定，同轮内自愈。"""
+    base = (1 << 64) - 1
+    for i in range(1, 5):
+        _insert(store, i, subject="同主题", simhash=base if i % 2 else base ^ 0b11111111)
+    queue = tmp_path / "queue.json"
+    write_review_queue(store, near_dedup(store), queue)
+
+    class BatchFailLLM:
+        def __init__(self):
+            self.batch_calls = 0
+            self.single_calls = 0
+
+        def judge_batch(self, pairs, max_tokens=None):
+            self.batch_calls += 1
+            return [None] * len(pairs)      # 模拟截断/解析失败
+
+        def judge_pair(self, ta, tb):
+            self.single_calls += 1
+            return True
+
+    llm = BatchFailLLM()
+    applied = judge_pairs_with_llm(store, [], llm, queue, save_every=100,
+                                   batch_size=2)
+    assert llm.single_calls == 2          # 2 对（贪心 spend 后不相交）全部降级逐对成功
+    assert applied == 2
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    assert all(p.get("verdict") == "duplicate" for p in data["pairs"])
+
+
 def test_llm_batching_chunks_inband_items(store, tmp_path):
     """带内条目按 batch_size 分批调用 judge_batch。"""
     base = (1 << 64) - 1
