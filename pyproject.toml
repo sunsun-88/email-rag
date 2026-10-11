@@ -1,12 +1,30 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=77"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "email-rag"
 version = "0.1.0"
-description = "Fetch all IMAP emails, deduplicate, export RAG-ready Markdown"
+description = "Fetch all IMAP emails, deduplicate (exact + SimHash), and export RAG-ready Markdown. Fully local."
+readme = "README.md"
 requires-python = ">=3.10"
+license = "Apache-2.0"
+license-files = ["LICENSE"]
+authors = [{ name = "sunsun-88" }]
+keywords = ["email", "imap", "deduplication", "simhash", "rag", "markdown", "local-first"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: End Users/Desktop",
+    "Natural Language :: Chinese (Simplified)",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Communications :: Email",
+    "Topic :: Text Processing :: Indexing",
+]
 dependencies = [
     "imapclient>=3.3",
     "html2text>=2024.2.26",
@@ -15,10 +33,15 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-dev = ["pytest>=8.0"]
+dev = ["pytest>=8.0", "pytest-cov>=5.0"]
 
 [project.scripts]
 email-rag = "email_rag.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/sunsun-88/email-rag"
+Repository = "https://github.com/sunsun-88/email-rag"
+Issues = "https://github.com/sunsun-88/email-rag/issues"
 
 [tool.setuptools.packages.find]
 where = ["src"]
