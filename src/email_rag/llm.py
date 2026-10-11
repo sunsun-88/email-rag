@@ -7,8 +7,14 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 _MAX_TEXT_LEN = 2000  # 每封仅发送截断后的规范化文本片段（spec §12 最小化原则）
-_SINGLE_MAX_TOKENS = 256      # 单对裁定的输出上限
+_SINGLE_MAX_TOKENS = 512        # 单对裁定的输出上限（含 reasoning 模型思考开销）
 _DEFAULT_TOKENS_PER_PAIR = 200  # 批量裁定每对的输出预算（实测模型约 167/对）
+_REASONING_HEADROOM = 512     # 批量输出预算的思考余量（reasoning_content 开销）
+
+
+def _message_text(message: dict) -> str:
+    """合并 reasoning_content 与 content（R1 类推理模型的结论可能在思考段里）。"""
+    return (message.get("reasoning_content") or "") + (message.get("content") or "")
 
 _PROMPT_TEMPLATE = """判断两段邮件正文是否为重复内容。
 判定为重复：同一内容的不同版本、转发/回复导致的变化、格式差异。
@@ -101,7 +107,7 @@ class _ChatCompletionsLLM:
         )
         with urllib.request.urlopen(request, timeout=60) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        content = data["choices"][0]["message"]["content"]
+        content = _message_text(data["choices"][0]["message"])
         verdict = _extract_verdict(content)
         if verdict is None:
             raise LLMError(f"无法解析 LLM 响应: {content[:120]}")
@@ -111,9 +117,10 @@ class _ChatCompletionsLLM:
                     max_tokens: int | None = None) -> list[bool | None]:
         """批量裁定：一次调用判多组，显著减少请求次数。
 
-        返回与输入等长的判定列表（None=未判定）。输出上限默认
-        _DEFAULT_TOKENS_PER_PAIR × 组数（截断会导致 JSON 残缺解析失败），
-        可用 max_tokens 显式覆盖；生成耗时随上限增长，超时放宽到 300 秒。
+        返回与输入等长的判定列表（None=未判定）。输出预算默认
+        _DEFAULT_TOKENS_PER_PAIR × 组数 + _REASONING_HEADROOM（截断会导致
+        JSON 残缺解析失败；推理模型的思考段也占用该预算），可用 max_tokens
+        显式覆盖；生成耗时随预算增长，超时放宽到 300 秒。
         """
         if not text_pairs:
             return []
@@ -122,7 +129,8 @@ class _ChatCompletionsLLM:
             for i, (a, b) in enumerate(text_pairs)
         )
         prompt = _BATCH_PROMPT_TEMPLATE.format(n=len(text_pairs), groups=groups)
-        budget = max_tokens or _DEFAULT_TOKENS_PER_PAIR * len(text_pairs)
+        budget = max_tokens or (_DEFAULT_TOKENS_PER_PAIR * len(text_pairs)
+                                + _REASONING_HEADROOM)
         payload = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
@@ -135,7 +143,7 @@ class _ChatCompletionsLLM:
         )
         with urllib.request.urlopen(request, timeout=300) as resp:
             data = json.loads(resp.read().decode("utf-8"))
-        content = data["choices"][0]["message"]["content"]
+        content = _message_text(data["choices"][0]["message"])
         return _extract_batch_verdicts(content, len(text_pairs))
 
 

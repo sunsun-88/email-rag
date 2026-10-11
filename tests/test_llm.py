@@ -141,7 +141,7 @@ def _fake_urlopen_capturing(monkeypatch, captured, response_content):
 
 
 def test_judge_batch_success_and_token_cap(monkeypatch):
-    """批量裁定：一次调用返回全部 verdict；默认输出上限=200×组数。"""
+    """批量裁定：一次调用返回全部 verdict；默认预算=200×组数+512（思考余量）。"""
     from email_rag.llm import _ChatCompletionsLLM
 
     captured = {}
@@ -151,7 +151,38 @@ def test_judge_batch_success_and_token_cap(monkeypatch):
     llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
     result = llm.judge_batch([("a1", "b1"), ("a2", "b2"), ("a3", "b3")])
     assert result == [True, False, True]
-    assert captured["body"]["max_tokens"] == 600  # 200 × 3 组
+    assert captured["body"]["max_tokens"] == 1112  # 200×3 + 512
+
+
+def test_judge_batch_reads_reasoning_content(monkeypatch):
+    """reasoning 模型的答案可能在 reasoning_content（content 为空）也要解析。"""
+    from email_rag.llm import _ChatCompletionsLLM
+
+    captured = {}
+    _fake_urlopen_capturing(monkeypatch, captured, "")  # content 为空
+    # 手工构造：verdict 藏在 reasoning_content 里
+    import io
+    import json as jsonlib
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = jsonlib.loads(request.data.decode("utf-8"))
+        payload = jsonlib.dumps({"choices": [{"message": {
+            "role": "assistant",
+            "content": "",
+            "reasoning_content": "分析……最终结论：[{\"i\": 0, \"dup\": true}]",
+        }}]}).encode("utf-8")
+        return FakeResp(payload)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+    llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
+    assert llm.judge_batch([("a", "b")]) == [True]
 
 
 def test_judge_batch_custom_max_tokens(monkeypatch):
