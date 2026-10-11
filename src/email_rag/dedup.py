@@ -389,49 +389,93 @@ def apply_review(store: Store, queue_path: str | Path) -> int:
 _MAX_CONSECUTIVE_FAILURES = 5  # LLM 连续失败上限：早停止损（如服务器宕机）
 
 
+def _save_queue(data: dict, path: Path) -> None:
+    path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                    encoding="utf-8")
+
+
 def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
-                         queue_path: str | Path, save_every: int = 20) -> int:
-    """逐条 LLM 裁定并写回 verdict；失败条目保持无 verdict 留待人工。
+                         queue_path: str | Path, save_every: int = 20,
+                         batch_size: int = 20,
+                         auto_dup_threshold: float = 0.90,
+                         auto_unique_threshold: float = 0.80) -> int:
+    """逐条/逐批 LLM 裁定并写回 verdict；失败条目保持无 verdict 留待人工。
 
-    队列文件是权威来源：合并写后含历次积压条目，与本轮 pairs 并无一一
-    对应关系，故不按位置 zip 配对，而是遍历文件中所有无 verdict 条目逐条
-    裁定（preview 取自条目自身）。pairs 参数保留以兼容既有调用，同时把
-    尚未入队的新对并入队列，保证本轮新对不被漏判。
-
-    健壮性：每 save_every 条增量落盘（中途被杀不丢已完成进度）；连续失败
-    _MAX_CONSECUTIVE_FAILURES 次即中止（避免服务器宕机时逐对超时傻等），
-    已裁定进度已保存，修好服务后重跑即可续裁剩余。
+    成本控制（用户的合理要求：不遍历全量、控制输出 token）：
+    - 高置信端规则直判，不进 LLN：similarity ≥ auto_dup_threshold 判 duplicate，
+      < auto_unique_threshold 判 unique；
+    - 仅灰色带 [auto_unique_threshold, auto_dup_threshold) 送 LLM，
+      支持 judge_batch 的客户端按 batch_size 对一批次调用（输出上限 16×组数）；
+    - 增量落盘（中途被杀不丢进度）；连续失败 _MAX_CONSECUTIVE_FAILURES 次即
+      中止（服务器宕机不逐对傻等），修好后重跑 dedup --llm 续裁剩余。
     """
     path = Path(queue_path)
     if pairs:
         write_review_queue(store, pairs, path)
     data = json.loads(path.read_text(encoding="utf-8"))
+    items = [it for it in data.get("pairs", []) if isinstance(it, dict)]
+
+    # 第一遍：高置信端规则直判
+    inband: list[dict] = []
+    auto_decided = 0
+    for item in items:
+        if item.get("verdict"):
+            continue
+        sim = item.get("similarity") or 0
+        if sim >= auto_dup_threshold:
+            item["verdict"] = "duplicate"
+            auto_decided += 1
+        elif sim < auto_unique_threshold:
+            item["verdict"] = "unique"
+            auto_decided += 1
+        else:
+            inband.append(item)
+    if auto_decided:
+        log.info("规则直判 %d 对（≥%.2f 判重复、<%.2f 判不重复），送 LLM %d 对",
+                 auto_decided, auto_dup_threshold, auto_unique_threshold,
+                 len(inband))
+
     consecutive_failures = 0
     since_save = 0
-    aborted = False
-    for item in data.get("pairs", []):
-        if not isinstance(item, dict) or item.get("verdict"):
-            continue
-        if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
-            aborted = True
-            break
-        try:
-            verdict = llm.judge_pair(item.get("preview_a", ""),
-                                     item.get("preview_b", ""))
-            item["verdict"] = "duplicate" if verdict else "unique"
-            consecutive_failures = 0
-        except Exception as exc:  # noqa: BLE001
-            consecutive_failures += 1
-            log.warning("LLM 裁定失败 pair(%s, %s): %s",
-                        item.get("a"), item.get("b"), exc)
-        since_save += 1
+    pending = list(inband)
+    while pending and consecutive_failures < _MAX_CONSECUTIVE_FAILURES:
+        if hasattr(llm, "judge_batch"):
+            chunk, pending = pending[:batch_size], pending[batch_size:]
+            texts = [(it.get("preview_a", ""), it.get("preview_b", ""))
+                     for it in chunk]
+            try:
+                verdicts = llm.judge_batch(texts)
+            except Exception as exc:  # noqa: BLE001
+                consecutive_failures += 1
+                log.warning("LLM 批量裁定失败（%d 对）: %s", len(chunk), exc)
+            else:
+                if all(v is None for v in verdicts):
+                    consecutive_failures += 1
+                    log.warning("LLM 批量裁定无有效结果（%d 对）", len(chunk))
+                else:
+                    consecutive_failures = 0
+                for it, v in zip(chunk, verdicts):
+                    if v is not None:
+                        it["verdict"] = "duplicate" if v else "unique"
+            since_save += len(chunk)
+        else:
+            item = pending.pop(0)
+            try:
+                v = llm.judge_pair(item.get("preview_a", ""),
+                                   item.get("preview_b", ""))
+                item["verdict"] = "duplicate" if v else "unique"
+                consecutive_failures = 0
+            except Exception as exc:  # noqa: BLE001
+                consecutive_failures += 1
+                log.warning("LLM 裁定失败 pair(%s, %s): %s",
+                            item.get("a"), item.get("b"), exc)
+            since_save += 1
         if since_save >= save_every:
-            path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                            encoding="utf-8")
+            _save_queue(data, path)
             since_save = 0
-    if aborted:
+    if pending and consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
         log.error("LLM 连续失败 %d 次，中止裁定；已完成进度已保存，"
-                  "修复服务后重跑 dedup --llm 续裁剩余", _MAX_CONSECUTIVE_FAILURES)
-    path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
-                    encoding="utf-8")
+                  "修复服务后重跑 dedup --llm 续裁剩余 %d 对",
+                  _MAX_CONSECUTIVE_FAILURES, len(pending))
+    _save_queue(data, path)
     return apply_review(store, path)

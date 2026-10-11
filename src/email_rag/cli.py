@@ -112,9 +112,12 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
                 print("提示：无法确定 LLM 服务端点，请配置 LLM_BASE_URL"
                       "（或 LLM_PROVIDER=deepseek/openai 使用默认端点）")
             else:
-                applied = judge_pairs_with_llm(store, pairs, llm,
-                                               cfg.review_queue_path)
-                print(f"LLM 已裁定 {applied} 对")
+                applied = judge_pairs_with_llm(
+                    store, pairs, llm, cfg.review_queue_path,
+                    batch_size=cfg.dedup.llm_batch_size,
+                    auto_dup_threshold=cfg.dedup.llm_auto_dup_threshold,
+                    auto_unique_threshold=cfg.dedup.llm_auto_unique_threshold)
+                print(f"已裁定 {applied} 对（高置信端规则直判 + LLM 灰色带）")
     finalized = store.finalize_uniques()
     print(f"标记 unique {finalized} 封")
 

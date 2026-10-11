@@ -36,7 +36,9 @@ class FetchConfig:
 class DedupConfig:
     auto_merge_threshold: float = 0.95
     review_threshold: float = 0.75
-    llm_batch_size: int = 20
+    llm_batch_size: int = 20          # 每批送 LLM 的对数（输出 token 上限=16×批大小）
+    llm_auto_dup_threshold: float = 0.90    # --llm 时相似度≥此值直判重复，不调 LLM
+    llm_auto_unique_threshold: float = 0.80  # --llm 时相似度<此值直判不重复，不调 LLM
 
 
 @dataclass

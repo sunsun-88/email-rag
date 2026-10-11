@@ -19,6 +19,13 @@ _PROMPT_TEMPLATE = """判断两段邮件正文是否为重复内容。
 文本B：
 {b}"""
 
+_BATCH_PROMPT_TEMPLATE = """判断下面 {n} 组邮件正文各自是否为重复内容。
+判定为重复：同一内容的不同版本、转发/回复导致的变化、格式差异。
+判定为不重复：主题相关但实质内容不同。
+仅输出 JSON 数组，形如：[{{"i": 0, "dup": true}}, {{"i": 1, "dup": false}}]，不要输出任何其他内容。
+
+{groups}"""
+
 
 class LLMError(Exception):
     """LLM 不可用或响应无法解析。"""
@@ -37,6 +44,27 @@ def _extract_verdict(content: str) -> bool | None:
     if isinstance(data, dict) and isinstance(data.get("duplicate"), bool):
         return data["duplicate"]
     return None
+
+
+def _extract_batch_verdicts(content: str, expected: int) -> list[bool | None]:
+    """从批量响应中提取判定数组；缺失/非法项为 None。长度恒等于 expected。"""
+    start = content.find("[")
+    end = content.rfind("]")
+    results: list[bool | None] = [None] * expected
+    if start == -1 or end == -1 or end <= start:
+        return results
+    try:
+        data = json.loads(content[start: end + 1])
+    except json.JSONDecodeError:
+        return results
+    if not isinstance(data, list):
+        return results
+    for item in data:
+        if isinstance(item, dict):
+            idx, dup = item.get("i"), item.get("dup")
+            if isinstance(idx, int) and isinstance(dup, bool) and 0 <= idx < expected:
+                results[idx] = dup
+    return results
 
 
 class NullLLM:
@@ -63,7 +91,7 @@ class _ChatCompletionsLLM:
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": 60,
+            "max_tokens": 32,  # 输出仅十几 token，留余量
         }
         request = urllib.request.Request(
             self._url, data=json.dumps(payload).encode("utf-8"),
@@ -76,6 +104,33 @@ class _ChatCompletionsLLM:
         if verdict is None:
             raise LLMError(f"无法解析 LLM 响应: {content[:120]}")
         return verdict
+
+    def judge_batch(self, text_pairs: list[tuple[str, str]]) -> list[bool | None]:
+        """批量裁定：一次调用判多组，显著减少请求次数。
+
+        返回与输入等长的判定列表（None=未判定）；输出 token 上限=16×组数。
+        """
+        if not text_pairs:
+            return []
+        groups = "\n\n".join(
+            f"【第{i}组】\n文本A：\n{a[:_MAX_TEXT_LEN]}\n文本B：\n{b[:_MAX_TEXT_LEN]}"
+            for i, (a, b) in enumerate(text_pairs)
+        )
+        prompt = _BATCH_PROMPT_TEMPLATE.format(n=len(text_pairs), groups=groups)
+        payload = {
+            "model": self._model,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0,
+            "max_tokens": 16 * len(text_pairs),  # 输出 token 控制：每组约 16 token
+        }
+        request = urllib.request.Request(
+            self._url, data=json.dumps(payload).encode("utf-8"),
+            headers=self._headers,
+        )
+        with urllib.request.urlopen(request, timeout=60) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
+        content = data["choices"][0]["message"]["content"]
+        return _extract_batch_verdicts(content, len(text_pairs))
 
 
 class DeepSeekLLM(_ChatCompletionsLLM):

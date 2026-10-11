@@ -132,14 +132,14 @@ def test_dedup_llm_adjudicates_existing_backlog(tmp_path, monkeypatch, capsys):
             return False
 
     payload = json.dumps(
-        {"choices": [{"message": {"content": '{"duplicate": true}'}}]}
+        {"choices": [{"message": {"content": '[{"i": 0, "dup": true}]'}}]}
     ).encode("utf-8")
     monkeypatch.setattr("urllib.request.urlopen",
                         lambda request, timeout=None: FakeResp(payload))
 
     assert main(["dedup", "--llm"]) == 0  # 第二轮：无新邮件，补裁积压
     out = capsys.readouterr().out
-    assert "LLM 已裁定 1 对" in out
+    assert "已裁定 1 对" in out
 
 
 def test_export_prune_flag(tmp_path, monkeypatch, capsys):

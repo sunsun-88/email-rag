@@ -117,3 +117,57 @@ def test_local_llm_judge_pair_sends_no_auth_header(monkeypatch):
     llm = create_llm("", "", "m", "http://h/v1")
     assert llm.judge_pair("a", "b") is True
     assert captured["headers"].get("Authorization") is None
+
+
+def _fake_urlopen_capturing(monkeypatch, captured, response_content):
+    import io
+    import json as jsonlib
+
+    class FakeResp(io.BytesIO):
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    def fake_urlopen(request, timeout=None):
+        captured["body"] = jsonlib.loads(request.data.decode("utf-8"))
+        payload = jsonlib.dumps(
+            {"choices": [{"message": {"content": response_content}}]}
+        ).encode("utf-8")
+        return FakeResp(payload)
+
+    monkeypatch.setattr("urllib.request.urlopen", fake_urlopen)
+
+
+def test_judge_batch_success_and_token_cap(monkeypatch):
+    """批量裁定：一次调用返回全部 verdict；max_tokens 按 16/组 封顶。"""
+    from email_rag.llm import _ChatCompletionsLLM
+
+    captured = {}
+    _fake_urlopen_capturing(
+        monkeypatch, captured,
+        '[{"i": 0, "dup": true}, {"i": 1, "dup": false}, {"i": 2, "dup": true}]')
+    llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
+    result = llm.judge_batch([("a1", "b1"), ("a2", "b2"), ("a3", "b3")])
+    assert result == [True, False, True]
+    assert captured["body"]["max_tokens"] == 48  # 16 × 3 组
+
+
+def test_judge_batch_partial_and_invalid(monkeypatch):
+    """批量响应缺项/非法 → 对应位置为 None，不抛异常。"""
+    from email_rag.llm import _ChatCompletionsLLM, _extract_batch_verdicts
+
+    captured = {}
+    _fake_urlopen_capturing(
+        monkeypatch, captured, '[{"i": 1, "dup": false}]')  # 缺第 0、2 组
+    llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
+    result = llm.judge_batch([("a", "b"), ("c", "d"), ("e", "f")])
+    assert result[1] is False
+    assert result[0] is None and result[2] is None
+
+    _fake_urlopen_capturing(monkeypatch, captured, "不是 JSON")
+    result2 = llm.judge_batch([("a", "b")])
+    assert result2 == [None]
+
+    assert _extract_batch_verdicts("垃圾", 2) == [None, None]

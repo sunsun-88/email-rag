@@ -41,7 +41,7 @@ BASE = (1 << 64) - 1
 
 def _make_review_pair(store):
     a = _insert(store, 1, subject="同主题", simhash=BASE)
-    b = _insert(store, 2, subject="同主题", simhash=BASE ^ 0b1111)
+    b = _insert(store, 2, subject="同主题", simhash=BASE ^ 0b11111111)
     return near_dedup(store), a, b
 
 
@@ -75,9 +75,9 @@ def test_llm_failure_pair_left_for_human(store, tmp_path):
 def test_judge_saves_progress_incrementally(store, tmp_path):
     """中途被杀死（KeyboardInterrupt）：已裁定条目必须已落盘，可续跑。"""
     a1 = _insert(store, 1, subject="甲主题", simhash=(1 << 64) - 1)
-    b1 = _insert(store, 2, subject="甲主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    b1 = _insert(store, 2, subject="甲主题", simhash=((1 << 64) - 1) ^ 0b11111111)
     c = _insert(store, 3, subject="乙主题", simhash=(1 << 64) - 1)
-    d = _insert(store, 4, subject="乙主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    d = _insert(store, 4, subject="乙主题", simhash=((1 << 64) - 1) ^ 0b11111111)
     queue = tmp_path / "queue.json"
     write_review_queue(store, near_dedup(store), queue)
     calls = {"n": 0}
@@ -103,7 +103,7 @@ def test_judge_aborts_after_consecutive_failures(store, tmp_path):
     """LLM 连续失败（如服务器宕机）→ 早停止损，不傻等全部对数。"""
     base = (1 << 64) - 1
     for i in range(1, 13):
-        _insert(store, i, subject="同主题", simhash=base if i % 2 else base ^ 0b1111)
+        _insert(store, i, subject="同主题", simhash=base if i % 2 else base ^ 0b11111111)
     queue = tmp_path / "queue.json"
     write_review_queue(store, near_dedup(store), queue)
 
@@ -121,14 +121,72 @@ def test_judge_aborts_after_consecutive_failures(store, tmp_path):
     assert applied == 0
 
 
+def test_llm_band_auto_resolves_confident_ends(store, tmp_path):
+    """--llm 时：高置信端规则直判不调用 LLM，只有灰色带送 LLM。"""
+    base = (1 << 64) - 1
+    # 三对：sim 0.95(≥0.90→直判dup)、0.85(带内→LLM)、0.76(<0.80→直判unique)
+    _insert(store, 1, subject="甲主题", simhash=base)
+    _insert(store, 2, subject="甲主题", simhash=base ^ 0b101)      # dist2 sim0.969→自动合并区
+    # 上面 0.969 会走 auto_merge_threshold(0.95)，改用手动队列更直接：
+    queue = tmp_path / "queue.json"
+    queue.write_text(json.dumps({"pairs": [
+        {"a": 1, "b": 2, "similarity": 0.95, "subject": "s",
+         "preview_a": "x", "preview_b": "y"},
+        {"a": 1, "b": 2, "similarity": 0.85, "subject": "s",
+         "preview_a": "x", "preview_b": "y"},
+        {"a": 1, "b": 2, "similarity": 0.76, "subject": "s",
+         "preview_a": "x", "preview_b": "y"},
+    ]}, ensure_ascii=False), encoding="utf-8")
+
+    class CountingLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def judge_pair(self, ta, tb):
+            self.calls += 1
+            return True
+
+    llm = CountingLLM()
+    judge_pairs_with_llm(store, [], llm, queue, save_every=1)
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    verdicts = [p.get("verdict") for p in data["pairs"]]
+    assert verdicts == ["duplicate", "duplicate", "unique"]
+    assert llm.calls == 1  # 只有 0.85 那一对真正调用了 LLM
+
+
+def test_llm_batching_chunks_inband_items(store, tmp_path):
+    """带内条目按 batch_size 分批调用 judge_batch。"""
+    base = (1 << 64) - 1
+    for i in range(1, 13):
+        _insert(store, i, subject="同主题", simhash=base if i % 2 else base ^ 0b11111111)
+    queue = tmp_path / "queue.json"
+    write_review_queue(store, near_dedup(store), queue)
+    inband = sum(1 for p in json.loads(queue.read_text(encoding="utf-8"))["pairs"]
+                 if 0.80 <= p["similarity"] < 0.90)
+
+    class BatchLLM:
+        def __init__(self):
+            self.batches = []
+
+        def judge_batch(self, pairs):
+            self.batches.append(len(pairs))
+            return [True] * len(pairs)
+
+    llm = BatchLLM()
+    judge_pairs_with_llm(store, [], llm, queue, save_every=100, batch_size=2)
+    assert llm.batches                      # 走了批量路径
+    assert sum(llm.batches) == inband       # 只送了带内条目
+    assert all(size <= 2 for size in llm.batches)
+
+
 def test_llm_judges_backlog_and_new_pairs(store, tmp_path):
     # 旧积压 (1,2) 已入队未裁定；本轮产生新对 (3,4)
     a1 = _insert(store, 1, subject="甲主题", simhash=(1 << 64) - 1)
-    b1 = _insert(store, 2, subject="甲主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    b1 = _insert(store, 2, subject="甲主题", simhash=((1 << 64) - 1) ^ 0b11111111)
     queue = tmp_path / "q.json"
     write_review_queue(store, near_dedup(store), queue)
     c = _insert(store, 3, subject="乙主题", simhash=(1 << 64) - 1)
-    d = _insert(store, 4, subject="乙主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    d = _insert(store, 4, subject="乙主题", simhash=((1 << 64) - 1) ^ 0b11111111)
     pairs2 = near_dedup(store)
 
     class YesLLM:

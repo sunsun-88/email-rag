@@ -1,11 +1,13 @@
 fetch:
-  folders: all
+  folders: INBOX
   exclude: [Junk, Trash, 垃圾邮件, 已删除]
   rate_limit_per_sec: 2
   reconnect_max: 5
 dedup:
-  auto_merge_threshold: 0.95
-  review_threshold: 0.75
-  llm_batch_size: 20
+  auto_merge_threshold: 0.95   # 相似度 ≥0.95 自动合并（保留代表）
+  review_threshold: 0.75       # 0.75~0.95 进复核队列让你确认；<0.75 当作不同邮件
+  llm_batch_size: 20           # 每批送 LLM 的对数（输出 token 上限 = 16×批大小）
+  llm_auto_dup_threshold: 0.90     # --llm 时相似度≥此值直判重复，不调 LLM
+  llm_auto_unique_threshold: 0.80  # --llm 时相似度<此值直判不重复，不调 LLM
 export:
   output_dir: output
