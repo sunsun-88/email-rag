@@ -102,6 +102,19 @@ def test_empty_hash_filenames_unique(store, tmp_path):
     assert len(files) == 2
 
 
+def test_render_markdown_normalizes_crlf():
+    record = {
+        "subject": "主题", "sender": "a@b.c",
+        "recipients": '["d@e.f"]', "cc": "[]",
+        "date": "2024-03-15T09:30:00+08:00", "folder": "INBOX",
+        "message_id": "<m1@t>", "dedup_status": "unique",
+        "content_hash": "abcdef0123456789", "body_text": "第一行\r\n第二行\r\n\r\n第四行",
+    }
+    md = render_markdown(record)
+    assert "\r" not in md
+    assert "第一行\n第二行\n\n第四行" in md
+
+
 def test_export_prune_removes_stale(store, tmp_path):
     _insert(store, 1, "主题甲", "正文", status="unique", content_hash="a" * 64)
     out = tmp_path / "out"

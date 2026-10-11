@@ -16,6 +16,9 @@ def slugify(text: str, max_len: int = 40) -> str:
 
 
 def render_markdown(record: dict) -> str:
+    # 统一行尾为 LF：quoted-printable 解码的正文常带 CRLF，
+    # 避免写入时被 text-mode 放大成 \r\r\n，也让 RAG 分块更干净
+    body = record["body_text"].replace("\r\n", "\n")
     frontmatter = {
         "subject": record["subject"],
         "from": record["sender"],
@@ -33,7 +36,7 @@ def render_markdown(record: dict) -> str:
         lines.append(f"{key}: {json.dumps(value, ensure_ascii=False)}")
     lines.append("---")
     lines.append("")
-    lines.append(record["body_text"])
+    lines.append(body)
     return "\n".join(lines) + "\n"
 
 
