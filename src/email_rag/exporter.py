@@ -57,7 +57,8 @@ def export_all(store: Store, output_dir: str | Path, prune: bool = False) -> dic
         hash_part = rec["content_hash"][:8] or f"x{rec['id']:07d}"
         name = f"{day}-{slugify(rec['subject'])}-{hash_part}.md"
         target = folder_dir / name
-        target.write_text(render_markdown(rec), encoding="utf-8")
+        # newline="" 关闭 Windows text-mode 的 \n→\r\n 转换，保证全文统一 LF
+        target.write_text(render_markdown(rec), encoding="utf-8", newline="")
         written.add(target.resolve())
         count += 1
     pruned = 0

@@ -115,6 +115,17 @@ def test_render_markdown_normalizes_crlf():
     assert "第一行\n第二行\n\n第四行" in md
 
 
+def test_export_writes_lf_only(store, tmp_path):
+    """导出文件字节级 LF：CRLF 正文 + Windows text-mode 转换都不能引入 \\r。"""
+    _insert(store, 1, "主题甲", "第一行\r\n第二行", status="unique",
+            content_hash="a" * 64)
+    out = tmp_path / "out"
+    export_all(store, out)
+    raw = next(out.rglob("*.md")).read_bytes()
+    assert b"\r" not in raw
+    assert "第一行\n第二行" in raw.decode("utf-8")
+
+
 def test_export_prune_removes_stale(store, tmp_path):
     _insert(store, 1, "主题甲", "正文", status="unique", content_hash="a" * 64)
     out = tmp_path / "out"
