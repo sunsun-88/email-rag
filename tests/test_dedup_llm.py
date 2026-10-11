@@ -72,6 +72,55 @@ def test_llm_failure_pair_left_for_human(store, tmp_path):
     assert store.get_email(a)["dedup_status"] == "review"  # 保持待复核
 
 
+def test_judge_saves_progress_incrementally(store, tmp_path):
+    """中途被杀死（KeyboardInterrupt）：已裁定条目必须已落盘，可续跑。"""
+    a1 = _insert(store, 1, subject="甲主题", simhash=(1 << 64) - 1)
+    b1 = _insert(store, 2, subject="甲主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    c = _insert(store, 3, subject="乙主题", simhash=(1 << 64) - 1)
+    d = _insert(store, 4, subject="乙主题", simhash=((1 << 64) - 1) ^ 0b1111)
+    queue = tmp_path / "queue.json"
+    write_review_queue(store, near_dedup(store), queue)
+    calls = {"n": 0}
+
+    class InterruptingLLM:
+        def judge_pair(self, ta, tb):
+            calls["n"] += 1
+            if calls["n"] == 2:
+                raise KeyboardInterrupt
+            return True
+
+    try:
+        judge_pairs_with_llm(store, [], InterruptingLLM(), queue, save_every=1)
+    except KeyboardInterrupt:
+        pass
+    data = json.loads(queue.read_text(encoding="utf-8"))
+    verdicts = [p.get("verdict") for p in data["pairs"]]
+    assert verdicts[0] == "duplicate"  # 第 1 对已增量落盘
+    assert verdicts[1] is None         # 第 2 对未裁定
+
+
+def test_judge_aborts_after_consecutive_failures(store, tmp_path):
+    """LLM 连续失败（如服务器宕机）→ 早停止损，不傻等全部对数。"""
+    base = (1 << 64) - 1
+    for i in range(1, 13):
+        _insert(store, i, subject="同主题", simhash=base if i % 2 else base ^ 0b1111)
+    queue = tmp_path / "queue.json"
+    write_review_queue(store, near_dedup(store), queue)
+
+    class FailLLM:
+        def __init__(self):
+            self.calls = 0
+
+        def judge_pair(self, ta, tb):
+            self.calls += 1
+            raise RuntimeError("server down")
+
+    llm = FailLLM()
+    applied = judge_pairs_with_llm(store, [], llm, queue, save_every=1)
+    assert llm.calls == 5  # 第 6 对未尝试（连续失败中止）
+    assert applied == 0
+
+
 def test_llm_judges_backlog_and_new_pairs(store, tmp_path):
     # 旧积压 (1,2) 已入队未裁定；本轮产生新对 (3,4)
     a1 = _insert(store, 1, subject="甲主题", simhash=(1 << 64) - 1)

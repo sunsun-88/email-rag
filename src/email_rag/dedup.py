@@ -386,29 +386,52 @@ def apply_review(store: Store, queue_path: str | Path) -> int:
 
 # ---------- LLM 复核 ----------
 
+_MAX_CONSECUTIVE_FAILURES = 5  # LLM 连续失败上限：早停止损（如服务器宕机）
+
+
 def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
-                         queue_path: str | Path) -> int:
+                         queue_path: str | Path, save_every: int = 20) -> int:
     """逐条 LLM 裁定并写回 verdict；失败条目保持无 verdict 留待人工。
 
     队列文件是权威来源：合并写后含历次积压条目，与本轮 pairs 并无一一
     对应关系，故不按位置 zip 配对，而是遍历文件中所有无 verdict 条目逐条
     裁定（preview 取自条目自身）。pairs 参数保留以兼容既有调用，同时把
     尚未入队的新对并入队列，保证本轮新对不被漏判。
+
+    健壮性：每 save_every 条增量落盘（中途被杀不丢已完成进度）；连续失败
+    _MAX_CONSECUTIVE_FAILURES 次即中止（避免服务器宕机时逐对超时傻等），
+    已裁定进度已保存，修好服务后重跑即可续裁剩余。
     """
     path = Path(queue_path)
     if pairs:
         write_review_queue(store, pairs, path)
     data = json.loads(path.read_text(encoding="utf-8"))
+    consecutive_failures = 0
+    since_save = 0
+    aborted = False
     for item in data.get("pairs", []):
         if not isinstance(item, dict) or item.get("verdict"):
             continue
+        if consecutive_failures >= _MAX_CONSECUTIVE_FAILURES:
+            aborted = True
+            break
         try:
             verdict = llm.judge_pair(item.get("preview_a", ""),
                                      item.get("preview_b", ""))
             item["verdict"] = "duplicate" if verdict else "unique"
+            consecutive_failures = 0
         except Exception as exc:  # noqa: BLE001
+            consecutive_failures += 1
             log.warning("LLM 裁定失败 pair(%s, %s): %s",
                         item.get("a"), item.get("b"), exc)
+        since_save += 1
+        if since_save >= save_every:
+            path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
+                            encoding="utf-8")
+            since_save = 0
+    if aborted:
+        log.error("LLM 连续失败 %d 次，中止裁定；已完成进度已保存，"
+                  "修复服务后重跑 dedup --llm 续裁剩余", _MAX_CONSECUTIVE_FAILURES)
     path.write_text(json.dumps(data, ensure_ascii=False, indent=2),
                     encoding="utf-8")
     return apply_review(store, path)
