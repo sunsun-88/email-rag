@@ -403,10 +403,10 @@ def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
     """逐条/逐批 LLM 裁定并写回 verdict；失败条目保持无 verdict 留待人工。
 
     成本控制（用户的合理要求：不遍历全量、控制输出 token）：
-    - 高置信端规则直判，不进 LLN：similarity ≥ auto_dup_threshold 判 duplicate，
+    - 高置信端规则直判，不进 LLM：similarity ≥ auto_dup_threshold 判 duplicate，
       < auto_unique_threshold 判 unique；
     - 仅灰色带 [auto_unique_threshold, auto_dup_threshold) 送 LLM，
-      支持 judge_batch 的客户端按 batch_size 对一批次调用（输出上限 16×组数）；
+      支持 judge_batch 的客户端按 batch_size 对一批次调用（输出上限 = 每对预算 × 组数）；
     - 增量落盘（中途被杀不丢进度）；连续失败 _MAX_CONSECUTIVE_FAILURES 次即
       中止（服务器宕机不逐对傻等），修好后重跑 dedup --llm 续裁剩余。
     """

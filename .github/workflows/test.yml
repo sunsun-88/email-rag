@@ -47,7 +47,7 @@ jobs:
           echo "OK: 无内网地址"
       - name: 疑似密钥扫描
         run: |
-          if git grep -n -I -E "(sk-[A-Za-z0-9]{20}|tvly-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}|github_pat_)" -- .; then
+          if git grep -n -I -E "(sk-[A-Za-z0-9]{20}|tvly-[A-Za-z0-9]|ghp_[A-Za-z0-9]{20}|github_pat_[A-Za-z0-9_]{20})" -- .; then
             echo "::error::检测到疑似密钥"; exit 1
           fi
           echo "OK: 无密钥字面量"
