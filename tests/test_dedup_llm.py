@@ -167,9 +167,11 @@ def test_llm_batching_chunks_inband_items(store, tmp_path):
     class BatchLLM:
         def __init__(self):
             self.batches = []
+            self.max_tokens_seen = []
 
-        def judge_batch(self, pairs):
+        def judge_batch(self, pairs, max_tokens=None):
             self.batches.append(len(pairs))
+            self.max_tokens_seen.append(max_tokens)
             return [True] * len(pairs)
 
     llm = BatchLLM()
@@ -177,6 +179,7 @@ def test_llm_batching_chunks_inband_items(store, tmp_path):
     assert llm.batches                      # 走了批量路径
     assert sum(llm.batches) == inband       # 只送了带内条目
     assert all(size <= 2 for size in llm.batches)
+    assert llm.max_tokens_seen == [200 * size for size in llm.batches]
 
 
 def test_llm_judges_backlog_and_new_pairs(store, tmp_path):

@@ -398,7 +398,8 @@ def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
                          queue_path: str | Path, save_every: int = 20,
                          batch_size: int = 20,
                          auto_dup_threshold: float = 0.90,
-                         auto_unique_threshold: float = 0.80) -> int:
+                         auto_unique_threshold: float = 0.80,
+                         output_tokens_per_pair: int = 200) -> int:
     """逐条/逐批 LLM 裁定并写回 verdict；失败条目保持无 verdict 留待人工。
 
     成本控制（用户的合理要求：不遍历全量、控制输出 token）：
@@ -444,7 +445,8 @@ def judge_pairs_with_llm(store: Store, pairs: list[ReviewPair], llm,
             texts = [(it.get("preview_a", ""), it.get("preview_b", ""))
                      for it in chunk]
             try:
-                verdicts = llm.judge_batch(texts)
+                verdicts = llm.judge_batch(
+                    texts, max_tokens=output_tokens_per_pair * len(chunk))
             except Exception as exc:  # noqa: BLE001
                 consecutive_failures += 1
                 log.warning("LLM 批量裁定失败（%d 对）: %s", len(chunk), exc)

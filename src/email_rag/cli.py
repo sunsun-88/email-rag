@@ -116,7 +116,8 @@ def run_dedup(store: Store, cfg: AppConfig, use_llm: bool = False,
                     store, pairs, llm, cfg.review_queue_path,
                     batch_size=cfg.dedup.llm_batch_size,
                     auto_dup_threshold=cfg.dedup.llm_auto_dup_threshold,
-                    auto_unique_threshold=cfg.dedup.llm_auto_unique_threshold)
+                    auto_unique_threshold=cfg.dedup.llm_auto_unique_threshold,
+                    output_tokens_per_pair=cfg.dedup.llm_output_tokens_per_pair)
                 print(f"已裁定 {applied} 对（高置信端规则直判 + LLM 灰色带）")
     finalized = store.finalize_uniques()
     print(f"标记 unique {finalized} 封")

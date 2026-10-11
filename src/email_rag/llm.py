@@ -7,6 +7,8 @@ import urllib.request
 log = logging.getLogger(__name__)
 
 _MAX_TEXT_LEN = 2000  # 每封仅发送截断后的规范化文本片段（spec §12 最小化原则）
+_SINGLE_MAX_TOKENS = 256      # 单对裁定的输出上限
+_DEFAULT_TOKENS_PER_PAIR = 200  # 批量裁定每对的输出预算（实测模型约 167/对）
 
 _PROMPT_TEMPLATE = """判断两段邮件正文是否为重复内容。
 判定为重复：同一内容的不同版本、转发/回复导致的变化、格式差异。
@@ -22,7 +24,7 @@ _PROMPT_TEMPLATE = """判断两段邮件正文是否为重复内容。
 _BATCH_PROMPT_TEMPLATE = """判断下面 {n} 组邮件正文各自是否为重复内容。
 判定为重复：同一内容的不同版本、转发/回复导致的变化、格式差异。
 判定为不重复：主题相关但实质内容不同。
-仅输出 JSON 数组，形如：[{{"i": 0, "dup": true}}, {{"i": 1, "dup": false}}]，不要输出任何其他内容。
+不要分析过程，直接输出结果。仅输出 JSON 数组，形如：[{{"i": 0, "dup": true}}, {{"i": 1, "dup": false}}]，不要输出任何其他内容。
 
 {groups}"""
 
@@ -91,7 +93,7 @@ class _ChatCompletionsLLM:
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": 32,  # 输出仅十几 token，留余量
+            "max_tokens": _SINGLE_MAX_TOKENS,
         }
         request = urllib.request.Request(
             self._url, data=json.dumps(payload).encode("utf-8"),
@@ -105,10 +107,13 @@ class _ChatCompletionsLLM:
             raise LLMError(f"无法解析 LLM 响应: {content[:120]}")
         return verdict
 
-    def judge_batch(self, text_pairs: list[tuple[str, str]]) -> list[bool | None]:
+    def judge_batch(self, text_pairs: list[tuple[str, str]],
+                    max_tokens: int | None = None) -> list[bool | None]:
         """批量裁定：一次调用判多组，显著减少请求次数。
 
-        返回与输入等长的判定列表（None=未判定）；输出 token 上限=16×组数。
+        返回与输入等长的判定列表（None=未判定）。输出上限默认
+        _DEFAULT_TOKENS_PER_PAIR × 组数（截断会导致 JSON 残缺解析失败），
+        可用 max_tokens 显式覆盖；生成耗时随上限增长，超时放宽到 300 秒。
         """
         if not text_pairs:
             return []
@@ -117,17 +122,18 @@ class _ChatCompletionsLLM:
             for i, (a, b) in enumerate(text_pairs)
         )
         prompt = _BATCH_PROMPT_TEMPLATE.format(n=len(text_pairs), groups=groups)
+        budget = max_tokens or _DEFAULT_TOKENS_PER_PAIR * len(text_pairs)
         payload = {
             "model": self._model,
             "messages": [{"role": "user", "content": prompt}],
             "temperature": 0,
-            "max_tokens": 16 * len(text_pairs),  # 输出 token 控制：每组约 16 token
+            "max_tokens": budget,
         }
         request = urllib.request.Request(
             self._url, data=json.dumps(payload).encode("utf-8"),
             headers=self._headers,
         )
-        with urllib.request.urlopen(request, timeout=60) as resp:
+        with urllib.request.urlopen(request, timeout=300) as resp:
             data = json.loads(resp.read().decode("utf-8"))
         content = data["choices"][0]["message"]["content"]
         return _extract_batch_verdicts(content, len(text_pairs))

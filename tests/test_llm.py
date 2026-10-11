@@ -141,7 +141,7 @@ def _fake_urlopen_capturing(monkeypatch, captured, response_content):
 
 
 def test_judge_batch_success_and_token_cap(monkeypatch):
-    """批量裁定：一次调用返回全部 verdict；max_tokens 按 16/组 封顶。"""
+    """批量裁定：一次调用返回全部 verdict；默认输出上限=200×组数。"""
     from email_rag.llm import _ChatCompletionsLLM
 
     captured = {}
@@ -151,7 +151,18 @@ def test_judge_batch_success_and_token_cap(monkeypatch):
     llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
     result = llm.judge_batch([("a1", "b1"), ("a2", "b2"), ("a3", "b3")])
     assert result == [True, False, True]
-    assert captured["body"]["max_tokens"] == 48  # 16 × 3 组
+    assert captured["body"]["max_tokens"] == 600  # 200 × 3 组
+
+
+def test_judge_batch_custom_max_tokens(monkeypatch):
+    """max_tokens 可显式覆盖（judge_pairs_with_llm 的 output_tokens_per_pair 用）。"""
+    from email_rag.llm import _ChatCompletionsLLM
+
+    captured = {}
+    _fake_urlopen_capturing(monkeypatch, captured, '[{"i": 0, "dup": true}]')
+    llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
+    llm.judge_batch([("a", "b")], max_tokens=42)
+    assert captured["body"]["max_tokens"] == 42
 
 
 def test_judge_batch_partial_and_invalid(monkeypatch):
