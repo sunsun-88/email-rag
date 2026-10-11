@@ -58,7 +58,7 @@
 > 数据文件（`data/emails.db`、`data/review_queue.json`）和导出目录（`output/`）
 > 的相对路径都基于 `config.yaml` 所在目录解析——即使在别的目录执行命令，数据也
 > 不会"跑丢"到别处。其中 `data/emails.db` 就是**项目目录下的
-> `data\emails.db`**（例如 `E:\project\python\email\email-rag\data\emails.db`）。
+> `data\emails.db`**（例如 `D:\my-project\email-rag\data\emails.db`）。
 
 ### 第 1 步：装 Python 环境
 

@@ -9,6 +9,10 @@ output/
 dist/
 build/
 
+.vscode/
+.idea/
+.DS_Store
+
 .superpowers/
 
 .coverage

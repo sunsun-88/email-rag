@@ -141,7 +141,7 @@ def _fake_urlopen_capturing(monkeypatch, captured, response_content):
 
 
 def test_judge_batch_success_and_token_cap(monkeypatch):
-    """批量裁定：一次调用返回全部 verdict；默认预算=200×组数+512（思考余量）。"""
+    """批量裁定：一次调用返回全部 verdict；默认预算=384×组数+1024（思考余量）。"""
     from email_rag.llm import _ChatCompletionsLLM
 
     captured = {}
@@ -151,7 +151,7 @@ def test_judge_batch_success_and_token_cap(monkeypatch):
     llm = _ChatCompletionsLLM("k", "m", "http://h/v1")
     result = llm.judge_batch([("a1", "b1"), ("a2", "b2"), ("a3", "b3")])
     assert result == [True, False, True]
-    assert captured["body"]["max_tokens"] == 2176  # 384×3 + 1024
+    assert captured["body"]["max_tokens"] == 2176  # 384×3 + 1024（llm.py 的每对预算常量 + 思考余量）
 
 
 def test_judge_batch_reads_reasoning_content(monkeypatch):

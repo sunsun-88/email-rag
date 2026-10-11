@@ -9,6 +9,6 @@ dedup:
   llm_batch_size: 20           # 每批送 LLM 的对数
   llm_auto_dup_threshold: 0.90     # --llm 时相似度≥此值直判重复，不调 LLM
   llm_auto_unique_threshold: 0.80  # --llm 时相似度<此值直判不重复，不调 LLM
-  llm_output_tokens_per_pair: 200  # 每对输出 token 预算（截断会解析失败，按模型实测调整）
+  llm_output_tokens_per_pair: 200  # 每对输出 token 预算（截断会解析失败，按模型实测调整；与代码默认值一致）
 export:
   output_dir: output
